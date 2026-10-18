@@ -1,0 +1,32 @@
+# User-owned credentials and local environment
+Creds.txt
+Google_creds.json
+*_creds.json
+.env
+.env.*
+!.env.example
+!.env.postgres.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+npm-debug.log*
+apps/web/test-results/
+apps/web/eng.traineddata
+
+# Local data and tools
+*.db
+*.sqlite*
+graphify-out/
+artifacts/
+.DS_Store
