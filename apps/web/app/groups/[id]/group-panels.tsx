@@ -1,5 +1,5 @@
 "use client";
-import { FormEvent } from "react";
+import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 export type Member = {
   id: string;
@@ -38,6 +38,7 @@ export type Settlement = {
   reference: string | null;
   status: string;
   kind: string;
+  reverses_settlement_id?: string | null;
 };
 export type Template = {
   id: string;
@@ -45,11 +46,17 @@ export type Template = {
   description: string;
   currency: string;
   version: number;
+  active: boolean;
   components: {
     label: string;
     amount: string;
     strategy: string;
+    shares?: { member_id: string; value?: string | null }[];
   }[];
+};
+export type Activity = {
+  expenses: { id: string; description: string; amount: string; currency: string; date: string; status: string; corrects_expense_id: string | null }[];
+  settlements: (Settlement & { date: string })[];
 };
 export type Analytics = {
   totals_by_currency: Record<string, string>;
@@ -252,6 +259,8 @@ export function SettlePanel({
   version,
   names,
   submit,
+  confirm,
+  reverse,
 }: {
   groupId: string;
   expenses: Analytics["recent_expenses"];
@@ -260,14 +269,17 @@ export function SettlePanel({
   version: number;
   names: Map<string, string>;
   submit: (body: object) => Promise<void>;
+  confirm: (id: string) => Promise<void>;
+  reverse: (id: string, reference: string) => Promise<void>;
 }) {
+  const [preview, setPreview] = useState<{ suggestion: Suggestion; body: object }>();
   async function settle(
     event: FormEvent<HTMLFormElement>,
     suggestion: Suggestion,
   ) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    await submit({
+    setPreview({ suggestion, body: {
       idempotency_key: crypto.randomUUID(),
       expected_group_version: version,
       payer_member_id: suggestion.payer_member_id,
@@ -277,7 +289,7 @@ export function SettlePanel({
       settlement_date: data.get("date"),
       reference: data.get("reference"),
       status: data.get("status"),
-    });
+    }});
   }
   return (
     <div className="group-data-grid">
@@ -332,7 +344,7 @@ export function SettlePanel({
                 <option value="pending">Pending agreement</option>
               </select>
             </label>
-            <button>Record Settlement</button>
+            <button>Review Settlement</button>
           </form>
         ))}
       </section>
@@ -340,7 +352,7 @@ export function SettlePanel({
         <h3>Settlement history</h3>
         {settlements.length ? (
           settlements.map((row) => (
-            <div className="finance-row" key={row.id}>
+            <article className="finance-row settlement-history-row" key={row.id}>
               <span>
                 {names.get(row.payer_member_id)} →{" "}
                 {names.get(row.payee_member_id)}
@@ -350,7 +362,9 @@ export function SettlePanel({
                 </small>
               </span>
               <b>{money(row.amount, row.currency)}</b>
-            </div>
+              {row.status === "pending" ? <button className="secondary" onClick={() => confirm(row.id)}>Confirm</button> : null}
+              {row.status === "confirmed" && row.kind === "payment" ? <button className="secondary" onClick={() => { const reason = window.prompt("Why is this settlement being reversed?"); if (reason) void reverse(row.id, reason); }}>Reverse</button> : null}
+            </article>
           ))
         ) : (
           <p className="muted">No repayments recorded.</p>
@@ -370,6 +384,12 @@ export function SettlePanel({
           </Link>
         ))}
       </section>
+      {preview ? <dialog open className="confirmation-preview" aria-labelledby="settlement-preview-title">
+        <h3 id="settlement-preview-title">Confirm recorded settlement</h3>
+        <p><strong>{preview.suggestion.payer_name}</strong> paid <strong>{preview.suggestion.payee_name}</strong>.</p>
+        <p>{money(String((preview.body as { amount: string }).amount), preview.suggestion.currency)} will reduce their current obligation. This records an external payment; it does not move money.</p>
+        <div className="share-actions"><button onClick={async () => { await submit(preview.body); setPreview(undefined); }}>Confirm Record</button><button className="secondary" onClick={() => setPreview(undefined)}>Cancel</button></div>
+      </dialog> : null}
     </div>
   );
 }
@@ -379,13 +399,20 @@ export function TemplatesPanel({
   currency,
   create,
   apply,
+  update,
+  setActive,
 }: {
   templates: Template[];
   members: Member[];
   currency: string;
   create: (body: object) => Promise<void>;
   apply: (id: string) => Promise<void>;
+  update: (id: string, body: object) => Promise<void>;
+  setActive: (id: string, version: number, active: boolean) => Promise<void>;
 }) {
+  const [strategy, setStrategy] = useState("equal");
+  const [editing, setEditing] = useState<string>();
+  const valueStrategies = new Set(["percentage", "exact", "weighted", "quantity", "usage", "time"]);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -398,10 +425,10 @@ export function TemplatesPanel({
         {
           label: data.get("label"),
           amount: data.get("amount"),
-          strategy: "equal",
+          strategy,
           shares: members
             .filter((member) => member.active)
-            .map((member) => ({ member_id: member.id })),
+            .map((member) => ({ member_id: member.id, ...(valueStrategies.has(strategy) ? { value: data.get(`share-${member.id}`) } : {}) })),
         },
       ],
     });
@@ -420,9 +447,17 @@ export function TemplatesPanel({
                   {row.description} · v{row.version}
                 </span>
               </div>
-              <button className="secondary" onClick={() => apply(row.id)}>
-                Prepare Draft
-              </button>
+              <div className="share-actions">
+                {row.active ? <button className="secondary" onClick={() => apply(row.id)}>Prepare Draft</button> : null}
+                {row.active ? <button className="secondary" onClick={() => setEditing(editing === row.id ? undefined : row.id)}>{editing === row.id ? "Close" : "Edit"}</button> : null}
+                <button className="secondary" onClick={() => setActive(row.id, row.version, !row.active)}>{row.active ? "Archive" : "Restore"}</button>
+              </div>
+              {!row.active ? <small>Archived · unavailable for new expenses</small> : null}
+              {editing === row.id ? <form className="template-edit" onSubmit={(event) => { event.preventDefault(); const data = new FormData(event.currentTarget); void update(row.id, { name: data.get("name"), description: data.get("description"), currency: row.currency, expected_version: row.version, components: row.components }).then(() => setEditing(undefined)); }}>
+                <label>Name<input name="name" defaultValue={row.name} required maxLength={120}/></label>
+                <label>Description<input name="description" defaultValue={row.description} required maxLength={280}/></label>
+                <button>Save Version {row.version + 1}</button>
+              </form> : null}
             </div>
           ))
         ) : (
@@ -430,7 +465,7 @@ export function TemplatesPanel({
         )}
       </section>
       <section>
-        <h3>New equal-split template</h3>
+        <h3>New split template</h3>
         <form onSubmit={save}>
           <label>
             Name
@@ -456,6 +491,13 @@ export function TemplatesPanel({
             </label>
           </div>
           <label>
+            Split method
+            <select name="strategy" value={strategy} onChange={(event) => setStrategy(event.target.value)}>
+              <option value="equal">Equal</option><option value="percentage">Percentage</option><option value="exact">Exact amounts</option><option value="weighted">Weighted</option><option value="quantity">Quantity</option><option value="usage">Usage</option><option value="time">Time</option>
+            </select>
+          </label>
+          {valueStrategies.has(strategy) ? <fieldset><legend>Participant values</legend>{members.filter((member) => member.active).map((member) => <label key={member.id}>{member.display_name}<input name={`share-${member.id}`} required inputMode="decimal" min="0" defaultValue={strategy === "percentage" ? String(100 / members.filter((item) => item.active).length) : "1"}/></label>)}</fieldset> : null}
+          <label>
             Currency
             <select name="currency" defaultValue={currency}>
               <option>INR</option>
@@ -471,6 +513,23 @@ export function TemplatesPanel({
       </section>
     </div>
   );
+}
+
+export function HistoryPanel({ groupId, activity, names }: { groupId: string; activity: Activity; names: Map<string, string> }) {
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState("all");
+  const entries = useMemo(() => [
+    ...activity.expenses.map((row) => ({ key: `expense-${row.id}`, kind: "expense", date: row.date, title: row.description, meta: `${row.status}${row.corrects_expense_id ? " · correction" : ""}`, amount: row.amount, currency: row.currency, href: `/groups/${groupId}/expenses/${row.id}` })),
+    ...activity.settlements.map((row) => ({ key: `settlement-${row.id}`, kind: "settlement", date: row.date ?? row.settlement_date, title: `${names.get(row.payer_member_id) ?? "Member"} paid ${names.get(row.payee_member_id) ?? "Member"}`, meta: `${row.kind} · ${row.status}${row.reference ? ` · ${row.reference}` : ""}`, amount: row.amount, currency: row.currency, href: undefined })),
+  ].filter((row) => (kind === "all" || row.kind === kind) && `${row.title} ${row.meta}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => b.date.localeCompare(a.date)), [activity, groupId, kind, names, query]);
+  return <section>
+    <div className="panel-title-row"><div><p className="eyebrow">Audit-friendly timeline</p><h2>Group History</h2></div><span>{entries.length} records</span></div>
+    <div className="form-row"><label>Search history<input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Expense, person, or reference"/></label><label>Record type<select value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">All activity</option><option value="expense">Expenses</option><option value="settlement">Settlements</option></select></label></div>
+    {entries.length ? <div className="expense-directory-list">{entries.map((row) => {
+      const content = <><span><strong>{row.title}</strong><small>{row.date} · {row.meta}</small></span><b>{money(row.amount, row.currency)}</b></>;
+      return row.href ? <Link className="finance-row expense-link" href={row.href} key={row.key}>{content}</Link> : <article className="finance-row" key={row.key}>{content}</article>;
+    })}</div> : <div className="empty compact"><h3>No matching activity</h3><p>Try a different search or filter.</p></div>}
+  </section>;
 }
 export function MembersPanel({
   members,

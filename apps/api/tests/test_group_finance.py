@@ -60,6 +60,12 @@ def test_templates_update_apply_and_do_not_change_history(client, db):
     draft = client.post(f"/v1/groups/{group['id']}/templates/{created.json()['id']}/apply", headers=headers()).json()
     assert draft["payers"] == [] and draft["template_version"] == 2 and draft["components"][0]["strategy"] == "usage"
     assert db.get(SharedExpense, uuid.UUID(expense["id"])).description == "Shared bill"
+    archived = client.patch(f"/v1/groups/{group['id']}/templates/{created.json()['id']}/status", headers=headers(), json={"expected_version": 2, "active": False})
+    assert archived.status_code == 200 and archived.json()["active"] is False and archived.json()["version"] == 3
+    assert client.get(f"/v1/groups/{group['id']}/templates", headers=headers()).json() == []
+    all_templates = client.get(f"/v1/groups/{group['id']}/templates?include_archived=true", headers=headers()).json()
+    assert len(all_templates) == 1 and all_templates[0]["active"] is False
+    assert client.post(f"/v1/groups/{group['id']}/templates/{created.json()['id']}/apply", headers=headers()).status_code == 404
 
 
 def test_expense_detail_is_authorized_exact_and_share_ready(client):
@@ -91,3 +97,17 @@ def test_correction_member_lifecycle_multicurrency_suggestions_and_analytics(cli
     analytics = client.get(f"/v1/groups/{group['id']}/analytics", headers=headers()).json()
     assert Decimal(analytics["totals_by_currency"]["INR"]) == Decimal("60")
     assert len(analytics["recent_expenses"]) == 1
+    activity = client.get(f"/v1/groups/{group['id']}/activity", headers=headers()).json()
+    assert [row["status"] for row in activity["expenses"]] == ["confirmed", "reversed"]
+    assert activity["expenses"][0]["corrects_expense_id"] == expense["id"]
+    assert client.get(f"/v1/groups/{group['id']}/activity", headers=headers(USER_B)).status_code == 404
+
+
+def test_archived_group_is_read_only_for_settlements_and_templates(client):
+    group, owner, guest, _, _ = setup_debt(client)
+    archived = client.put(f"/v1/groups/{group['id']}", headers=headers(), json={"expected_version": 3, "archived": True})
+    assert archived.status_code == 200
+    settlement = settlement_body(group, guest, owner, "10.00", "35000000-0000-4000-8000-000000000001", expected=4)
+    assert client.post(f"/v1/groups/{group['id']}/settlements", headers=headers(), json=settlement).status_code == 409
+    template = {"name": "Archived", "description": "Read only", "currency": "INR", "components": [{"label": "Bill", "amount": "10.00", "strategy": "equal", "shares": [{"member_id": owner["id"]}, {"member_id": guest["id"]}]}]}
+    assert client.post(f"/v1/groups/{group['id']}/templates", headers=headers(), json=template).status_code == 409

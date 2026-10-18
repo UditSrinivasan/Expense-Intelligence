@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -74,6 +74,11 @@ class TemplateUpdate(TemplateCreate):
     expected_version: int = Field(ge=1)
 
 
+class TemplateStatusUpdate(BaseModel):
+    expected_version: int = Field(ge=1)
+    active: bool
+
+
 class MemberUpdate(BaseModel):
     expected_group_version: int = Field(ge=1)
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
@@ -107,6 +112,25 @@ def _persist_expense(session: Session, group_id: uuid.UUID, user_id: uuid.UUID, 
 
 def _members(session: Session, group_id: uuid.UUID) -> list[GroupMember]:
     return list(session.scalars(select(GroupMember).where(GroupMember.group_id == group_id).order_by(GroupMember.created_at)).all())
+
+
+def _active_group(session: Session, group_id: uuid.UUID) -> ExpenseGroup:
+    group = session.get(ExpenseGroup, group_id)
+    if not group:
+        raise HTTPException(404, "Group not found")
+    if group.archived_at is not None:
+        raise HTTPException(409, "Archived groups are read-only")
+    return group
+
+
+def _can_manage_settlement(actor: GroupMember, row: Settlement, user_id: uuid.UUID) -> None:
+    if actor.role != GroupRole.owner and row.created_by_user_id != user_id:
+        raise HTTPException(403, "Only the settlement recorder or group owner can change it")
+
+
+def _can_manage_template(actor: GroupMember, row: SplitTemplate, user_id: uuid.UUID) -> None:
+    if actor.role != GroupRole.owner and row.created_by_user_id != user_id:
+        raise HTTPException(403, "Only the template creator or group owner can change it")
 
 
 def calculate_balances(session: Session, group_id: uuid.UUID) -> list[dict]:
@@ -169,6 +193,7 @@ def settlement_history(group_id: uuid.UUID, user: CurrentUser = Depends(get_curr
 @router.post("/{group_id}/settlements", response_model=SettlementRead, status_code=201)
 def record_settlement(group_id: uuid.UUID, payload: SettlementCreate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
     _membership(session, user.id, group_id)
+    _active_group(session, group_id)
     existing = session.scalar(select(Settlement).where(Settlement.group_id == group_id, Settlement.idempotency_key == payload.idempotency_key))
     if existing: return existing
     if payload.payer_member_id == payload.payee_member_id: raise HTTPException(422, "Payer and payee must differ")
@@ -191,8 +216,9 @@ def record_settlement(group_id: uuid.UUID, payload: SettlementCreate, user: Curr
 
 @router.post("/{group_id}/settlements/{settlement_id}/confirm", response_model=SettlementRead)
 def confirm_pending(group_id: uuid.UUID, settlement_id: uuid.UUID, expected_group_version: int, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
-    _membership(session, user.id, group_id); row = session.scalar(select(Settlement).where(Settlement.id == settlement_id, Settlement.group_id == group_id).with_for_update())
+    actor = _membership(session, user.id, group_id); _active_group(session, group_id); row = session.scalar(select(Settlement).where(Settlement.id == settlement_id, Settlement.group_id == group_id).with_for_update())
     if not row: raise HTTPException(404, "Settlement not found")
+    _can_manage_settlement(actor, row, user.id)
     if row.status == "confirmed": return row
     if row.status != "pending": raise HTTPException(409, "Only pending settlements can be confirmed")
     try: _bump_group(session, group_id, expected_group_version)
@@ -203,11 +229,12 @@ def confirm_pending(group_id: uuid.UUID, settlement_id: uuid.UUID, expected_grou
 
 @router.post("/{group_id}/settlements/{settlement_id}/reverse", response_model=SettlementRead, status_code=201)
 def reverse_settlement(group_id: uuid.UUID, settlement_id: uuid.UUID, payload: ReverseSettlement, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
-    _membership(session, user.id, group_id)
+    actor = _membership(session, user.id, group_id); _active_group(session, group_id)
     existing = session.scalar(select(Settlement).where(Settlement.group_id == group_id, Settlement.idempotency_key == payload.idempotency_key))
     if existing: return existing
     original = session.scalar(select(Settlement).where(Settlement.id == settlement_id, Settlement.group_id == group_id).with_for_update())
     if not original: raise HTTPException(404, "Settlement not found")
+    _can_manage_settlement(actor, original, user.id)
     if original.status != "confirmed" or original.kind != "payment": raise HTTPException(409, "Only confirmed payments can be reversed")
     try: _bump_group(session, group_id, payload.expected_group_version)
     except RuntimeError as exc: raise HTTPException(409, str(exc)) from exc
@@ -237,13 +264,18 @@ def _template_json(row: SplitTemplate) -> dict:
 
 
 @router.get("/{group_id}/templates")
-def list_templates(group_id: uuid.UUID, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
-    _membership(session, user.id, group_id); return [_template_json(row) for row in session.scalars(select(SplitTemplate).where(SplitTemplate.group_id == group_id, SplitTemplate.active.is_(True)).order_by(SplitTemplate.name)).all()]
+def list_templates(group_id: uuid.UUID, include_archived: bool = Query(False), user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    _membership(session, user.id, group_id)
+    query = select(SplitTemplate).where(SplitTemplate.group_id == group_id)
+    if not include_archived:
+        query = query.where(SplitTemplate.active.is_(True))
+    return [_template_json(row) for row in session.scalars(query.order_by(SplitTemplate.name)).all()]
 
 
 @router.post("/{group_id}/templates", status_code=201)
 def create_template(group_id: uuid.UUID, payload: TemplateCreate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
     _membership(session, user.id, group_id)
+    _active_group(session, group_id)
     try: _validate_template(session, group_id, payload)
     except ValueError as exc: raise HTTPException(422, str(exc)) from exc
     row = SplitTemplate(group_id=group_id, name=payload.name, description=payload.description, currency=payload.currency, category_id=payload.category_id, components_json=json.dumps([component.model_dump(mode="json") for component in payload.components]), created_by_user_id=user.id)
@@ -255,8 +287,9 @@ def create_template(group_id: uuid.UUID, payload: TemplateCreate, user: CurrentU
 
 @router.put("/{group_id}/templates/{template_id}")
 def update_template(group_id: uuid.UUID, template_id: uuid.UUID, payload: TemplateUpdate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
-    _membership(session, user.id, group_id); row = session.scalar(select(SplitTemplate).where(SplitTemplate.id == template_id, SplitTemplate.group_id == group_id).with_for_update())
+    actor = _membership(session, user.id, group_id); _active_group(session, group_id); row = session.scalar(select(SplitTemplate).where(SplitTemplate.id == template_id, SplitTemplate.group_id == group_id).with_for_update())
     if not row: raise HTTPException(404, "Template not found")
+    _can_manage_template(actor, row, user.id)
     if row.version != payload.expected_version: raise HTTPException(409, "Template changed; refresh and retry")
     try: _validate_template(session, group_id, payload)
     except ValueError as exc: raise HTTPException(422, str(exc)) from exc
@@ -264,9 +297,23 @@ def update_template(group_id: uuid.UUID, template_id: uuid.UUID, payload: Templa
     session.add(AuditEvent(actor_user_id=user.id, action="split_template.updated", target_type="split_template", target_id=str(row.id))); session.commit(); session.refresh(row); return _template_json(row)
 
 
+@router.patch("/{group_id}/templates/{template_id}/status")
+def set_template_status(group_id: uuid.UUID, template_id: uuid.UUID, payload: TemplateStatusUpdate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    actor = _membership(session, user.id, group_id); _active_group(session, group_id)
+    row = session.scalar(select(SplitTemplate).where(SplitTemplate.id == template_id, SplitTemplate.group_id == group_id).with_for_update())
+    if not row: raise HTTPException(404, "Template not found")
+    _can_manage_template(actor, row, user.id)
+    if row.version != payload.expected_version: raise HTTPException(409, "Template changed; refresh and retry")
+    if row.active == payload.active: return _template_json(row)
+    row.active = payload.active; row.version += 1; row.updated_at = datetime.now(timezone.utc)
+    action = "split_template.restored" if payload.active else "split_template.archived"
+    session.add(AuditEvent(actor_user_id=user.id, action=action, target_type="split_template", target_id=str(row.id)))
+    session.commit(); session.refresh(row); return _template_json(row)
+
+
 @router.post("/{group_id}/templates/{template_id}/apply")
 def apply_template(group_id: uuid.UUID, template_id: uuid.UUID, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
-    _membership(session, user.id, group_id); row = session.scalar(select(SplitTemplate).where(SplitTemplate.id == template_id, SplitTemplate.group_id == group_id, SplitTemplate.active.is_(True)))
+    _membership(session, user.id, group_id); _active_group(session, group_id); row = session.scalar(select(SplitTemplate).where(SplitTemplate.id == template_id, SplitTemplate.group_id == group_id, SplitTemplate.active.is_(True)))
     if not row: raise HTTPException(404, "Template not found")
     return {"template_id": row.id, "template_version": row.version, "idempotency_key": uuid.uuid4(), "description": row.description, "currency": row.currency, "category_id": row.category_id, "expense_date": date.today(), "components": json.loads(row.components_json), "payers": []}
 
@@ -307,6 +354,17 @@ def group_analytics(group_id: uuid.UUID, user: CurrentUser = Depends(get_current
     return {"totals_by_currency": totals, "spending_by_category": by_category, "spending_over_time": timeline, "participants": participant, "balances": balances, "settlements_completed": len([row for row in settlements if row.status == "confirmed" and row.kind == "payment"]), "recent_expenses": [{"id": row.id, "description": row.description, "total": row.total, "currency": row.currency, "expense_date": row.expense_date} for row in expenses[:10]], "largest_expenses": [{"id": row.id, "description": row.description, "total": row.total, "currency": row.currency} for row in sorted(expenses, key=lambda item: (-item.total, str(item.id)))[:5]], "unsettled_obligations": simplify_debts(balances), "currency_policy": "Original-currency totals remain separate; no FX amounts are merged."}
 
 
+@router.get("/{group_id}/activity")
+def group_activity(group_id: uuid.UUID, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    _membership(session, user.id, group_id)
+    expenses = session.scalars(select(SharedExpense).where(SharedExpense.group_id == group_id).order_by(SharedExpense.created_at.desc())).all()
+    settlements = session.scalars(select(Settlement).where(Settlement.group_id == group_id).order_by(Settlement.created_at.desc())).all()
+    return {
+        "expenses": [{"id": row.id, "description": row.description, "amount": row.total, "currency": row.currency, "date": row.expense_date, "status": row.state, "created_at": row.created_at, "corrects_expense_id": row.corrects_expense_id} for row in expenses],
+        "settlements": [{"id": row.id, "payer_member_id": row.payer_member_id, "payee_member_id": row.payee_member_id, "amount": row.amount, "currency": row.currency, "date": row.settlement_date, "status": row.status, "kind": row.kind, "reference": row.reference, "created_at": row.created_at, "reverses_settlement_id": row.reverses_settlement_id} for row in settlements],
+    }
+
+
 def _amount(value: Decimal) -> str:
     return format(value, "f")
 
@@ -335,6 +393,8 @@ def expense_detail(group_id: uuid.UUID, expense_id: uuid.UUID, user: CurrentUser
             raise HTTPException(409, "Stored component does not reconcile")
     balances = [{"member_id": member_id, "display_name": members[member_id].display_name, "currency": expense.currency, "balance": paid[member_id] - liabilities[member_id]} for member_id in sorted(set(paid) | set(liabilities), key=str)]
     replacement = session.scalar(select(SharedExpense.id).where(SharedExpense.corrects_expense_id == expense.id))
+    current_balances = calculate_balances(session, group_id)
+    settlement_rows = session.scalars(select(Settlement).where(Settlement.group_id == group_id, Settlement.currency == expense.currency).order_by(Settlement.settlement_date.desc(), Settlement.created_at.desc())).all()
     def adjustment_type(component):
         label = component.label.lower()
         if component.amount < 0 or "discount" in label or "rebate" in label: return "discount"
@@ -350,6 +410,8 @@ def expense_detail(group_id: uuid.UUID, expense_id: uuid.UUID, user: CurrentUser
         "participants": [{"member_id": member_id, "display_name": members[member_id].display_name, "share": _amount(liabilities[member_id]), "paid": _amount(paid[member_id]), "balance": _amount(paid[member_id] - liabilities[member_id])} for member_id in sorted(set(paid) | set(liabilities), key=str)],
         "components": [{"id": component.id, "label": component.label, "amount": _amount(component.amount), "strategy": component.strategy, "category_id": component.category_id, "adjustment_type": adjustment_type(component), "allocations": [{"member_id": row.member_id, "display_name": members[row.member_id].display_name, "input_value": _amount(row.input_value) if row.input_value is not None else None, "unrounded_amount": _amount(row.unrounded_amount), "amount": _amount(row.amount), "received_residual": row.received_residual} for row in by_component[component.id]]} for component in components],
         "obligations": [{**row, "amount": _amount(row["amount"])} for row in simplify_debts(balances)],
+        "group_outstanding": [{**row, "paid": _amount(row["paid"]), "owed": _amount(row["owed"]), "settled_out": _amount(row["settled_out"]), "settled_in": _amount(row["settled_in"]), "balance": _amount(row["balance"])} for row in current_balances if row["currency"] == expense.currency],
+        "settlement_history": [{"id": row.id, "payer_member_id": row.payer_member_id, "payer_name": members[row.payer_member_id].display_name, "payee_member_id": row.payee_member_id, "payee_name": members[row.payee_member_id].display_name, "amount": _amount(row.amount), "currency": row.currency, "date": row.settlement_date, "status": row.status, "kind": row.kind} for row in settlement_rows],
         "correction": {"corrects_expense_id": expense.corrects_expense_id, "replacement_expense_id": replacement},
         "reconciliation": {"payer_total": _amount(sum(paid.values(), Decimal(0))), "component_total": _amount(sum((row.amount for row in components), Decimal(0))), "allocation_total": _amount(sum(liabilities.values(), Decimal(0))), "reconciled": True},
     }
