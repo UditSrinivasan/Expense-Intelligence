@@ -1,9 +1,11 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { hostedConfigurationError } from "../../../../lib/deployment-env";
 import { authConfigured, createClient } from "../../../../lib/supabase/server";
 
 const allowedMethods = ["GET", "POST", "PUT", "DELETE"];
 
 async function forward(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  if (hostedConfigurationError()) return NextResponse.json({ detail: "Hosted configuration is incomplete" }, { status: 503 });
   if (!allowedMethods.includes(request.method)) return NextResponse.json({ detail: "Method not allowed" }, { status: 405 });
   if (request.method !== "GET" && request.headers.get("origin") !== request.nextUrl.origin) {
     return NextResponse.json({ detail: "Invalid request origin" }, { status: 403 });

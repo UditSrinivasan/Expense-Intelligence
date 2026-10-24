@@ -76,6 +76,21 @@ def test_hosted_configuration_accepts_full_certificate_verification():
     assert settings.invited_email_set == frozenset({"demo@example.com"})
 
 
+def test_hosted_configuration_caps_demo_database_pool():
+    common = {
+        "app_env": "hosted",
+        "allow_dev_auth": False,
+        "database_url": "postgresql+psycopg://app:secret@example.invalid/postgres?sslmode=verify-full",
+        "invited_user_emails": "demo@example.com",
+        "supabase_jwks_url": "https://example.invalid/.well-known/jwks.json",
+        "supabase_jwt_issuer": "https://example.invalid/auth/v1",
+    }
+    with pytest.raises(ValueError, match="database pool"):
+        Settings(**common, database_pool_size=6)
+    with pytest.raises(ValueError, match="database pool"):
+        Settings(**common, database_max_overflow=3)
+
+
 def test_verified_claims_keep_email_and_provider_for_invitation_gate(monkeypatch):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     monkeypatch.setattr("expense_intelligence.auth._jwks_client", lambda _url: StaticJwks(key))

@@ -76,14 +76,21 @@ def get_current_user(
     else:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Authentication required")
 
+    session.info["auth_subject"] = subject
+    session.info["current_user_email"] = email or ""
     if session.get_bind().dialect.name == "postgresql":
         session.execute(text("select set_config('app.auth_subject', :subject, true)"), {"subject": subject})
+        if email:
+            session.execute(text("select set_config('app.current_user_email', :email, true)"), {"email": email})
     user = session.scalar(select(User).where(User.auth_subject == subject))
     if user is None:
         try:
             user = User(auth_subject=subject)
             session.add(user)
             session.flush()
+            session.info["current_user_id"] = str(user.id)
+            if session.get_bind().dialect.name == "postgresql":
+                session.execute(text("select set_config('app.current_user_id', :user_id, true)"), {"user_id": str(user.id)})
             session.add(UserPreference(user_id=user.id))
             session.commit()
         except IntegrityError:
@@ -93,9 +100,5 @@ def get_current_user(
                 raise HTTPException(status.HTTP_409_CONFLICT, "Identity provisioning conflict; retry request")
     if session.get_bind().dialect.name == "postgresql":
         session.execute(text("select set_config('app.current_user_id', :user_id, true)"), {"user_id": str(user.id)})
-    session.info["auth_subject"] = subject
     session.info["current_user_id"] = str(user.id)
-    session.info["current_user_email"] = email or ""
-    if session.get_bind().dialect.name == "postgresql" and email:
-        session.execute(text("select set_config('app.current_user_email', :email, true)"), {"email": email})
     return CurrentUser(id=user.id, auth_subject=user.auth_subject, email=email)

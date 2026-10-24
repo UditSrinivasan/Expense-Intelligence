@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "eslint .",
-    "test": "node --experimental-strip-types --test app/imports/tabular.test.ts app/documents/document.test.ts app/groups/share.test.ts lib/supabase/invites.test.ts",
+    "test": "node --experimental-strip-types --test app/imports/tabular.test.ts app/documents/document.test.ts app/groups/share.test.ts lib/deployment-env.test.ts lib/supabase/invites.test.ts",
     "test:e2e": "playwright test",
     "eval:ocr": "node --experimental-strip-types app/documents/ocr.eval.ts"
   },
