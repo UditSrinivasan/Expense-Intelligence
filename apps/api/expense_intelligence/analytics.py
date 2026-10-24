@@ -144,7 +144,8 @@ def overview(start: date, end: date, user: CurrentUser = Depends(get_current_use
         raise HTTPException(422, "Date range must be ordered and no longer than 366 days")
     member_ids = list(session.scalars(select(GroupMember.id).where(GroupMember.linked_user_id == user.id)).all())
     linked_transaction_ids = set(session.scalars(select(SharedExpense.linked_transaction_id).join(ExpenseAllocation, ExpenseAllocation.expense_id == SharedExpense.id).where(ExpenseAllocation.member_id.in_(member_ids), SharedExpense.state == "confirmed", SharedExpense.linked_transaction_id.is_not(None))).all()) if member_ids else set()
-    rows = list(session.scalars(select(Transaction).where(Transaction.owner_user_id == user.id, Transaction.effective_date <= end, ~Transaction.id.in_(linked_transaction_ids)).order_by(Transaction.effective_date)).all())
+    all_rows = list(session.scalars(select(Transaction).where(Transaction.owner_user_id == user.id, Transaction.effective_date <= end).order_by(Transaction.effective_date)).all())
+    rows = [row for row in all_rows if row.id not in linked_transaction_ids]
     preference = session.get(AnalyticsPreference, user.id) or AnalyticsPreference(user_id=user.id)
     if not session.get(AnalyticsPreference, user.id): session.add(preference); session.commit()
     candidates, history, recurring = _detect(rows, start, end, preference.sensitivity)
@@ -159,11 +160,20 @@ def overview(start: date, end: date, user: CurrentUser = Depends(get_current_use
     by_transaction: dict[uuid.UUID, list[TransactionAllocation]] = defaultdict(list)
     for allocation in allocations: by_transaction[allocation.transaction_id].append(allocation)
     categories = {row.id: row for row in session.scalars(select(Category)).all()}
-    totals: dict[str, dict[str, Decimal]] = defaultdict(lambda: {"spend": Decimal(0), "income": Decimal(0), "refunds": Decimal(0)})
+    totals: dict[str, dict[str, Decimal]] = defaultdict(lambda: {"spend": Decimal(0), "income": Decimal(0), "refunds": Decimal(0), "cash_outflow": Decimal(0), "cash_income": Decimal(0)})
     category_totals: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
     monthly: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
     merchants: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
     unclassified: dict[str, Decimal] = defaultdict(Decimal)
+    for row in all_rows:
+        if not start <= row.effective_date <= end:
+            continue
+        if row.transaction_type == TransactionType.purchase and row.direction == TransactionDirection.expense:
+            totals[row.original_currency]["cash_outflow"] += row.original_amount
+        elif row.transaction_type == TransactionType.refund:
+            totals[row.original_currency]["cash_outflow"] -= row.original_amount
+        elif row.transaction_type == TransactionType.income and row.direction == TransactionDirection.income:
+            totals[row.original_currency]["cash_income"] += row.original_amount
     for row in period:
         amount = row.original_amount
         if row.transaction_type == TransactionType.purchase and row.direction == TransactionDirection.expense:
@@ -199,7 +209,8 @@ def overview(start: date, end: date, user: CurrentUser = Depends(get_current_use
 
     return {"period": {"start": start, "end": end}, "sensitivity": preference.sensitivity,
         "fx_policy": "Currencies are never combined. No implicit conversion is performed.",
-        "totals": [{"currency": c, **{k: _money(v) for k, v in values.items()}, "net": _money(values["income"] - values["spend"]), "unclassified": _money(unclassified[c]), "shared_consumption": _money(shared[c])} for c, values in sorted(totals.items())],
+        "totals": [{"currency": c, **{k: _money(v) for k, v in values.items()}, "net": _money(values["income"] - values["spend"]), "cash_net": _money(values["cash_income"] - values["cash_outflow"]), "unclassified": _money(unclassified[c]), "shared_consumption": _money(shared[c])} for c, values in sorted(totals.items())],
+        "recent_transactions": [{"id": str(row.id), "date": row.effective_date, "description": row.description, "amount": _money(row.original_amount), "currency": row.original_currency, "direction": row.direction.value, "type": row.transaction_type.value, "imported": row.import_batch_id is not None} for row in reversed(all_rows) if start <= row.effective_date <= end][:8],
         "time_series": [{"currency": c, "period": p, "spend": _money(v)} for (c, p), v in sorted(monthly.items())],
         "categories": [{"currency": c, "name": n, "spend": _money(v)} for (c, n), v in sorted(category_totals.items(), key=lambda item: item[1], reverse=True)],
         "merchants": [{"currency": c, "name": n, "spend": _money(v)} for (c, n), v in sorted(merchants.items(), key=lambda item: item[1], reverse=True)[:12]],

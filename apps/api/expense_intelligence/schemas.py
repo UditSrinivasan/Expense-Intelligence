@@ -64,6 +64,7 @@ class TransactionCreate(BaseModel):
     original_currency: str
     effective_date: date
     transaction_type: TransactionType = TransactionType.purchase
+    account_id: uuid.UUID | None = None
 
     @field_validator("original_currency")
     @classmethod
@@ -83,6 +84,11 @@ class TransactionRead(TransactionCreate):
     classification_source: ClassificationSource
     classification_confidence: float | None = None
     needs_review: bool
+    account_id: uuid.UUID | None = None
+    import_batch_id: uuid.UUID | None = None
+    import_row_id: uuid.UUID | None = None
+    posting_date: date | None = None
+    source_reference: str | None = None
 
 
 class DashboardSummary(BaseModel):

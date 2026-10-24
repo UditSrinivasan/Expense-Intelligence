@@ -399,6 +399,13 @@ export default function ImportsPage() {
       <p className="status" role="status" aria-live="polite">
         {status}
       </p>
+      <nav className="panel entry-hub" aria-label="Add financial records">
+        <div><p className="eyebrow">Choose a workflow</p><strong>What would you like to add?</strong></div>
+        <Link href="/imports" aria-current="page">Import Bank Statement</Link>
+        <Link href="/documents">Scan Receipt or PDF</Link>
+        <Link href="/transactions?add=true">Add Transaction</Link>
+        <Link href="/documents">Split Receipt</Link>
+      </nav>
       <section className="panel import-source">
         <div>
           <p className="eyebrow">Source</p>

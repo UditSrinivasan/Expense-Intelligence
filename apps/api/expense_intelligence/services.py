@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .classification import apply_rule, normalize_label
-from .models import AuditEvent, FxRate, Transaction, TransactionDirection, TransactionType, UserPreference
+from .models import AuditEvent, FinancialAccount, FxRate, Transaction, TransactionDirection, TransactionType, UserPreference
 from .schemas import DashboardSummary, FxConversionRead, PreferenceUpdate, TransactionCreate
 
 
@@ -32,6 +32,8 @@ def update_preferences(session: Session, user_id, update: PreferenceUpdate) -> U
 
 def create_transaction(session: Session, user_id, payload: TransactionCreate) -> Transaction:
     values = payload.model_dump()
+    if payload.account_id and not session.scalar(select(FinancialAccount.id).where(FinancialAccount.id == payload.account_id, FinancialAccount.owner_user_id == user_id, FinancialAccount.active.is_(True))):
+        raise LookupError("Financial account not found")
     if payload.direction == TransactionDirection.transfer:
         values["transaction_type"] = TransactionType.transfer
     elif payload.direction == TransactionDirection.income and payload.transaction_type == TransactionType.purchase:
@@ -46,13 +48,34 @@ def create_transaction(session: Session, user_id, payload: TransactionCreate) ->
     return transaction
 
 
-def list_transactions(session: Session, user_id, limit: int = 50) -> list[Transaction]:
+def list_transactions(
+    session: Session,
+    user_id,
+    limit: int = 50,
+    *,
+    query: str | None = None,
+    currency: str | None = None,
+    account_id=None,
+    start: date | None = None,
+    end: date | None = None,
+    transaction_type: TransactionType | None = None,
+) -> list[Transaction]:
+    statement = select(Transaction).where(Transaction.owner_user_id == user_id)
+    if query:
+        statement = statement.where(Transaction.description.ilike(f"%{query.strip()}%"))
+    if currency:
+        statement = statement.where(Transaction.original_currency == currency.upper())
+    if account_id:
+        statement = statement.where(Transaction.account_id == account_id)
+    if start:
+        statement = statement.where(Transaction.effective_date >= start)
+    if end:
+        statement = statement.where(Transaction.effective_date <= end)
+    if transaction_type:
+        statement = statement.where(Transaction.transaction_type == transaction_type)
     return list(
         session.scalars(
-            select(Transaction)
-            .where(Transaction.owner_user_id == user_id)
-            .order_by(Transaction.effective_date.desc(), Transaction.id.desc())
-            .limit(limit)
+            statement.order_by(Transaction.effective_date.desc(), Transaction.id.desc()).limit(limit)
         )
     )
 
