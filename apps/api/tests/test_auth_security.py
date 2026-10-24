@@ -5,7 +5,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.security import HTTPAuthorizationCredentials
 
-from expense_intelligence.auth import _subject_from_bearer
+from expense_intelligence.auth import _claims_from_bearer, _subject_from_bearer
 from expense_intelligence.config import Settings, get_settings
 from expense_intelligence.main import app
 
@@ -53,6 +53,32 @@ def test_hosted_auth_configuration_requires_issuer():
 
 
 def test_development_identity_header_is_rejected_in_hosted_mode(client):
-    app.dependency_overrides[get_settings] = lambda: Settings(app_env="hosted", allow_dev_auth=False)
+    app.dependency_overrides[get_settings] = lambda: Settings(app_env="hosted", allow_dev_auth=False, database_url="postgresql+psycopg://host/db?sslmode=require", invited_user_emails="tester@example.com", supabase_jwks_url="https://synthetic.invalid/jwks", supabase_jwt_issuer=ISSUER)
     response = client.get("/v1/transactions", headers={"X-Dev-User-Id": SUBJECT})
     assert response.status_code == 401
+
+
+def test_hosted_configuration_fails_closed_without_tls_invites_or_jwks():
+    with pytest.raises(ValueError):
+        Settings(app_env="hosted", database_url="postgresql+psycopg://host/db")
+
+
+def test_hosted_configuration_accepts_full_certificate_verification():
+    settings = Settings(
+        app_env="hosted",
+        allow_dev_auth=False,
+        agent_mode="disabled",
+        database_url="postgresql+psycopg://app:secret@example.invalid/postgres?sslmode=verify-full",
+        invited_user_emails="demo@example.com",
+        supabase_jwks_url="https://example.invalid/.well-known/jwks.json",
+        supabase_jwt_issuer="https://example.invalid/auth/v1",
+    )
+    assert settings.invited_email_set == frozenset({"demo@example.com"})
+
+
+def test_verified_claims_keep_email_and_provider_for_invitation_gate(monkeypatch):
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    monkeypatch.setattr("expense_intelligence.auth._jwks_client", lambda _url: StaticJwks(key))
+    settings = Settings(supabase_jwks_url="https://synthetic.invalid/jwks", supabase_jwt_issuer=ISSUER)
+    claims = _claims_from_bearer(credentials(token(key, email="Tester@Example.com", app_metadata={"provider": "google"})), settings)
+    assert claims["email"] == "Tester@Example.com"

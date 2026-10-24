@@ -12,6 +12,13 @@ test("allows unauthenticated requests to reach the OAuth initiation route", asyn
   await expect(page).toHaveURL(/\/login\?error=configuration$/);
 });
 
+test("explains invite-only denial without leaking account details", async ({ page }) => {
+  await page.goto("/auth/error?reason=not_invited");
+  await expect(page.getByRole("heading", { name: "This demo is invite-only." })).toBeVisible();
+  await expect(page.getByText(/approved tester list/)).toBeVisible();
+  await expect(page.locator("main")).not.toContainText(/bearer|access token|refresh token|cookie/i);
+});
+
 test("completes explicit India or UK onboarding without a browser identity header", async ({ page }) => {
   let saved: Record<string, unknown> | undefined;
   await page.route("**/api/backend/v1/profile", async route => {

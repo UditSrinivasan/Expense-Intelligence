@@ -245,6 +245,21 @@ class GroupMember(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class GroupInvitation(Base):
+    __tablename__ = "group_invitations"
+    __table_args__ = (Index("ix_group_invitations_group_email", "group_id", "invited_email"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("expense_groups.id", ondelete="CASCADE"), index=True)
+    guest_member_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("group_members.id", ondelete="RESTRICT"), index=True)
+    invited_email: Mapped[str] = mapped_column(String(320))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class SharedExpense(Base):
     __tablename__ = "shared_expenses"
     __table_args__ = (Index("ix_shared_expenses_group_date", "group_id", "expense_date"), UniqueConstraint("group_id", "idempotency_key", name="uq_shared_expense_idempotency"))

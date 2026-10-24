@@ -1,6 +1,8 @@
 import uuid
+import hashlib
+import secrets
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN
 from typing import Literal
 
@@ -12,9 +14,10 @@ from sqlalchemy.orm import Session
 
 from .auth import CurrentUser, get_current_user
 from .database import get_db
-from .models import AuditEvent, ExpenseAllocation, ExpenseComponent, ExpenseGroup, ExpensePayer, GroupMember, GroupRole, ReceiptDocument, SharedExpense
+from .models import AuditEvent, ExpenseAllocation, ExpenseComponent, ExpenseGroup, ExpensePayer, GroupInvitation, GroupMember, GroupRole, ReceiptDocument, SharedExpense
 
 router = APIRouter(prefix="/v1/groups", tags=["groups"])
+invites_router = APIRouter(prefix="/v1/group-invitations", tags=["group-invitations"])
 QUANTA = {"JPY": Decimal("1"), "KWD": Decimal("0.001")}
 
 
@@ -48,6 +51,16 @@ class GroupUpdate(BaseModel):
 class MemberCreate(BaseModel):
     display_name: str = Field(min_length=1, max_length=120)
     linked_user_id: uuid.UUID | None = None
+
+
+class InvitationCreate(BaseModel):
+    guest_member_id: uuid.UUID
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    expires_in_hours: int = Field(default=72, ge=1, le=168)
+
+
+class InvitationClaim(BaseModel):
+    token: str = Field(min_length=32, max_length=200)
 
 
 class ShareInput(BaseModel):
@@ -290,6 +303,65 @@ def add_member(group_id: uuid.UUID, payload: MemberCreate, user: CurrentUser = D
     session.add(member); session.add(AuditEvent(actor_user_id=user.id, action="group.member_added", target_type="expense_group", target_id=str(group_id)))
     session.commit(); session.refresh(member)
     return {"id": member.id, "display_name": member.display_name, "role": member.role, "is_guest": member.linked_user_id is None}
+
+
+@router.post("/{group_id}/invitations", status_code=201)
+def create_invitation(group_id: uuid.UUID, payload: InvitationCreate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    actor = _membership(session, user.id, group_id)
+    if actor.role != GroupRole.owner:
+        raise HTTPException(403, "Only group owners can invite registered users")
+    guest = session.scalar(select(GroupMember).where(GroupMember.id == payload.guest_member_id, GroupMember.group_id == group_id).with_for_update())
+    if not guest or guest.linked_user_id is not None:
+        raise HTTPException(409, "Invitation must target an unlinked guest")
+    email = payload.email.strip().casefold()
+    now = datetime.now(timezone.utc)
+    for existing in session.scalars(select(GroupInvitation).where(GroupInvitation.guest_member_id == guest.id, GroupInvitation.claimed_at.is_(None), GroupInvitation.revoked_at.is_(None))).all():
+        existing.revoked_at = now
+    token = secrets.token_urlsafe(32)
+    invitation = GroupInvitation(group_id=group_id, guest_member_id=guest.id, invited_email=email, token_hash=hashlib.sha256(token.encode()).hexdigest(), created_by_user_id=user.id, expires_at=now + timedelta(hours=payload.expires_in_hours))
+    session.add(invitation); session.add(AuditEvent(actor_user_id=user.id, action="group.invitation_created", target_type="group_invitation", target_id=str(invitation.id)))
+    session.commit(); session.refresh(invitation)
+    return {"id": invitation.id, "token": token, "expires_at": invitation.expires_at, "guest_member_id": guest.id}
+
+
+@router.delete("/{group_id}/invitations/{invitation_id}", status_code=204)
+def revoke_invitation(group_id: uuid.UUID, invitation_id: uuid.UUID, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    actor = _membership(session, user.id, group_id)
+    if actor.role != GroupRole.owner:
+        raise HTTPException(403, "Only group owners can revoke invitations")
+    invitation = session.scalar(select(GroupInvitation).where(GroupInvitation.id == invitation_id, GroupInvitation.group_id == group_id).with_for_update())
+    if not invitation:
+        raise HTTPException(404, "Invitation not found")
+    if invitation.claimed_at is not None:
+        raise HTTPException(409, "A claimed invitation cannot be revoked")
+    invitation.revoked_at = datetime.now(timezone.utc)
+    session.add(AuditEvent(actor_user_id=user.id, action="group.invitation_revoked", target_type="group_invitation", target_id=str(invitation.id)))
+    session.commit()
+
+
+@invites_router.post("/claim")
+def claim_invitation(payload: InvitationClaim, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
+    if not user.email:
+        raise HTTPException(403, "A verified email is required")
+    token_hash = hashlib.sha256(payload.token.encode()).hexdigest()
+    invitation = session.scalar(select(GroupInvitation).where(GroupInvitation.token_hash == token_hash).with_for_update())
+    now = datetime.now(timezone.utc)
+    expires_at = invitation.expires_at.replace(tzinfo=timezone.utc) if invitation and invitation.expires_at.tzinfo is None else invitation.expires_at if invitation else None
+    if not invitation or invitation.revoked_at is not None or invitation.claimed_at is not None or expires_at <= now:
+        raise HTTPException(404, "Invitation is unavailable")
+    if invitation.invited_email != user.email.casefold():
+        raise HTTPException(403, "Invitation belongs to another account")
+    if session.scalar(select(GroupMember.id).where(GroupMember.group_id == invitation.group_id, GroupMember.linked_user_id == user.id)):
+        raise HTTPException(409, "This account is already a group member")
+    guest = session.scalar(select(GroupMember).where(GroupMember.id == invitation.guest_member_id, GroupMember.group_id == invitation.group_id).with_for_update())
+    if not guest or guest.linked_user_id is not None:
+        raise HTTPException(409, "Guest membership is no longer available")
+    guest.linked_user_id = user.id
+    guest.guest_name = None
+    invitation.claimed_at = now
+    session.add(AuditEvent(actor_user_id=user.id, action="group.invitation_claimed", target_type="group_invitation", target_id=str(invitation.id)))
+    session.commit()
+    return {"group_id": invitation.group_id, "member_id": guest.id, "display_name": guest.display_name}
 
 
 @router.post("/{group_id}/expenses/preview", response_model=PreviewRead)

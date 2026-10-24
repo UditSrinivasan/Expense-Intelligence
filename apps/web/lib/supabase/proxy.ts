@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isInvited } from "./invites";
 
 const publicPaths = ["/login", "/auth/login", "/auth/callback", "/auth/error"];
 
@@ -24,7 +25,15 @@ export async function updateSession(request: NextRequest) {
     },
   });
   const { data, error } = await supabase.auth.getClaims();
-  const signedIn = !error && Boolean(data?.claims?.sub);
+  const claims = data?.claims;
+  const signedIn = !error && Boolean(claims?.sub);
+  if (claims?.sub && !error && !isInvited(claims)) {
+    await supabase.auth.signOut({ scope: "local" });
+    const denied = NextResponse.redirect(new URL("/auth/error?reason=not_invited", request.url));
+    response.cookies.getAll().forEach(cookie => denied.cookies.set(cookie));
+    denied.headers.set("Cache-Control", "private, no-store");
+    return denied;
+  }
   const isPublic = publicPaths.some((path) => request.nextUrl.pathname.startsWith(path));
   if (!signedIn && !isPublic) {
     const login = new URL("/login", request.url);

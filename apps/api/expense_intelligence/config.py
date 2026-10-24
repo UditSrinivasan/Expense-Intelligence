@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     supabase_jwt_issuer: str | None = None
     supabase_jwt_audience: str = "authenticated"
     web_origin: str = "http://localhost:3000"
+    invited_user_emails: str = ""
+    rate_limit_enabled: bool = True
     fx_base_url: str = "https://api.frankfurter.dev/v2"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.5-flash"
@@ -48,6 +50,24 @@ class Settings(BaseSettings):
         if value == "synthetic_developer" and info.data.get("app_env") == "hosted":
             raise ValueError("Synthetic developer agent cannot run in hosted environments")
         return value
+
+    @model_validator(mode="after")
+    def hosted_security_is_explicit(self):
+        if self.app_env != "hosted":
+            return self
+        lowered_url = self.database_url.lower()
+        secure_ssl_modes = ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full")
+        if not lowered_url.startswith("postgresql+") or not any(mode in lowered_url for mode in secure_ssl_modes):
+            raise ValueError("Hosted DATABASE_URL must use PostgreSQL with an enforced SSL mode")
+        if not self.invited_email_set:
+            raise ValueError("INVITED_USER_EMAILS must contain at least one address in hosted environments")
+        if not self.supabase_jwks_url or not self.supabase_jwt_issuer:
+            raise ValueError("Hosted Supabase JWT configuration is incomplete")
+        return self
+
+    @property
+    def invited_email_set(self) -> frozenset[str]:
+        return frozenset(value.strip().casefold() for value in self.invited_user_emails.split(",") if value.strip())
 
 
 @lru_cache
