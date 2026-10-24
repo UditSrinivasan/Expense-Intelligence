@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { ProductGuide } from "./product-guide";
+import { FeedbackPanel } from "./feedback-panel";
 
 const destinations = [
   { href: "/", label: "Overview", mark: "OV" },
@@ -62,6 +63,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <details className="mobile-menu"><summary aria-label="Open navigation">Open navigation</summary><Navigation pathname={pathname}/><AccountActions/></details>
     </header>
     <div className="app-content"><Breadcrumbs pathname={pathname}/>{children}</div>
-    <ProductGuide pathname={pathname}/>
+    <ProductGuide pathname={pathname}/><FeedbackPanel/>
   </div>;
 }

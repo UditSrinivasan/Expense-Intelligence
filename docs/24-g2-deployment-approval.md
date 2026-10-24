@@ -44,7 +44,7 @@ Affected roles: `expense_migrator` and `expense_app` (new). Neither is superuser
 
 Affected schemas: application objects in `public`; three helper functions in new schema `app_private`. Supabase-managed `auth`, `storage`, extensions, and platform roles are not changed.
 
-Affected data: existing rows are not replaced or deleted. Alembic adds only migrations not already present, through `0013_group_invitations`. On an empty project that creates the current application schema.
+Affected data: existing rows are not replaced or deleted. Alembic adds only migrations not already present, through `0014_beta_refinement`. Migration `0014` adds theme/accent preferences and optional private beta-feedback fields; it does not rewrite financial records. On an empty project the sequence creates the current application schema.
 
 ### Ordered execution after approval
 
@@ -65,7 +65,7 @@ The exact order above was rehearsed on PostgreSQL 16 in `g2_hosted_rehearsal`:
 
 - both roles had all five privileged flags false;
 - migrator owned 37 application tables and runtime owned zero;
-- migrations reached `0013_group_invitations`;
+- migrations reached `0013_group_invitations` during the original G2 rehearsal; `0014_beta_refinement` is validated separately before hosted execution;
 - RLS and runtime grants applied successfully;
 - runtime API provisioned two synthetic identities through RLS;
 - user A saw one INR transaction and one GBP group; user B saw neither;
@@ -73,7 +73,7 @@ The exact order above was rehearsed on PostgreSQL 16 in `g2_hosted_rehearsal`:
 
 ## Backup and rollback
 
-`age` 1.3.2 is installed from the hash-verified Windows Package Manager package. Using PostgreSQL 16's `pg_dump`/`pg_restore` inside the project container, a custom-format synthetic dump was encrypted to a one-time `age` recipient, decrypted with an identical SHA-256, and restored into a separately named disposable database. The restore reached `0013_group_invitations`, contained 37 public tables and the expected one synthetic transaction. The disposable database, plaintext copies, encrypted copy, and one-time identity were then removed. The hosted pre-change backup is still pending because no hosted DDL is authorized yet.
+`age` 1.3.2 is installed from the hash-verified Windows Package Manager package. Using PostgreSQL 16's `pg_dump`/`pg_restore` inside the project container, a custom-format synthetic dump was encrypted to a one-time `age` recipient, decrypted with an identical SHA-256, and restored into a separately named disposable database. The original restore reached `0013_group_invitations`, contained 37 public tables and the expected one synthetic transaction. G2.1 separately verified a clean PostgreSQL upgrade through `0014_beta_refinement`, downgrade to `0013_group_invitations`, and re-upgrade to `0014`; its disposable database was removed afterward. The disposable database, plaintext copies, encrypted copy, and one-time identity were then removed. The hosted pre-change backup is still pending because no hosted DDL is authorized yet.
 
 Rollback before user traffic:
 
@@ -95,6 +95,7 @@ Backend only:
 - `SUPABASE_JWKS_URL`, `SUPABASE_JWT_ISSUER`, `SUPABASE_JWT_AUDIENCE=authenticated`
 - `WEB_ORIGIN=https://<frontend-host>`
 - `INVITED_USER_EMAILS=<owner-supplied-list>`
+- `FEEDBACK_ADMIN_EMAILS=<owner-supplied-reviewers>`
 - `RATE_LIMIT_ENABLED=true`
 - `DATABASE_POOL_SIZE=5`, `DATABASE_MAX_OVERFLOW=2`, `DATABASE_POOL_RECYCLE_SECONDS=300`
 - `FORWARDED_ALLOW_IPS=<provider-proxy-cidrs>`

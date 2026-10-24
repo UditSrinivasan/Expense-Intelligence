@@ -78,10 +78,15 @@ def get_current_user(
 
     session.info["auth_subject"] = subject
     session.info["current_user_email"] = email or ""
+    session.info["feedback_admin"] = bool(email and email.casefold() in settings.feedback_admin_email_set)
     if session.get_bind().dialect.name == "postgresql":
         session.execute(text("select set_config('app.auth_subject', :subject, true)"), {"subject": subject})
         if email:
             session.execute(text("select set_config('app.current_user_email', :email, true)"), {"email": email})
+        session.execute(
+            text("select set_config('app.feedback_admin', :enabled, true)"),
+            {"enabled": "true" if session.info["feedback_admin"] else "false"},
+        )
     user = session.scalar(select(User).where(User.auth_subject == subject))
     if user is None:
         try:

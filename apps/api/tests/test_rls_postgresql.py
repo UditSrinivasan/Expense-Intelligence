@@ -25,6 +25,9 @@ def test_non_owner_rls_and_transaction_context_reset(client, db: Session):
     assert client.post("/v1/transactions", headers=headers(USER_B), json={**transaction, "description":"Other private record"}).status_code == 201
     group = client.post("/v1/groups", headers=headers(USER_A), json={"name":"Synthetic shared group", "default_currency":"INR", "owner_name":"A"}).json()
     client.post("/v1/groups", headers=headers(USER_B), json={"name":"Private B group", "default_currency":"GBP", "owner_name":"B"})
+    feedback = {"kind":"bug", "sentiment":"report", "description":"Synthetic private report"}
+    assert client.post("/v1/feedback", headers=headers(USER_A), json=feedback).status_code == 201
+    assert client.post("/v1/feedback", headers=headers(USER_B), json={**feedback, "description":"Other private report"}).status_code == 201
     user_a = db.scalar(select(User).where(User.auth_subject == f"dev:{USER_A}")); user_b = db.scalar(select(User).where(User.auth_subject == f"dev:{USER_B}"))
     db.add(GroupMember(group_id=uuid.UUID(group["id"]), linked_user_id=user_b.id, display_name="B", role=GroupRole.member)); db.commit()
 
@@ -53,6 +56,9 @@ def test_non_owner_rls_and_transaction_context_reset(client, db: Session):
             connection.execute(text("select set_config('app.current_user_id', :value, true)"), {"value":str(user_a.id)})
             assert connection.execute(text("select description from transactions")).scalars().all() == ["Private synthetic record"]
             assert connection.execute(text("select name from expense_groups")).scalars().all() == ["Synthetic shared group"]
+            assert connection.execute(text("select description from product_feedback")).scalars().all() == ["Synthetic private report"]
+            connection.execute(text("select set_config('app.feedback_admin', 'true', true)"))
+            assert set(connection.execute(text("select description from product_feedback")).scalars()) == {"Synthetic private report", "Other private report"}
             transaction_scope.rollback()
         with engine.connect() as connection:
             transaction_scope = connection.begin()

@@ -32,7 +32,11 @@ def test_preferences_and_transaction_are_user_scoped(client, db):
         "display_currency": "GBP",
         "time_zone": "Europe/London",
     }
-    assert client.put("/v1/preferences", headers=auth(USER_A), json=preference).json() == preference
+    assert client.put("/v1/preferences", headers=auth(USER_A), json=preference).json() == {
+        **preference,
+        "theme": "system",
+        "accent": "ocean",
+    }
 
     payload = {
         "description": "Groceries",

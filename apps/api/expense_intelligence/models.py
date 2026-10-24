@@ -59,6 +59,8 @@ class UserPreference(Base):
     tour_step: Mapped[int] = mapped_column(Integer, default=0)
     checklist_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     dashboard_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    theme: Mapped[str] = mapped_column(String(12), default="system")
+    accent: Mapped[str] = mapped_column(String(12), default="ocean")
     user: Mapped[User] = relationship(back_populates="preference")
 
 
@@ -524,6 +526,12 @@ class ProductFeedback(Base):
     sentiment: Mapped[str] = mapped_column(String(16))
     target_id: Mapped[str | None] = mapped_column(String(80))
     reason: Mapped[str | None] = mapped_column(String(40))
+    description: Mapped[str | None] = mapped_column(String(2000))
+    steps: Mapped[str | None] = mapped_column(String(2000))
+    page_path: Mapped[str | None] = mapped_column(String(300))
+    viewport: Mapped[str | None] = mapped_column(String(32))
+    contact_allowed: Mapped[bool] = mapped_column(Boolean, default=False)
+    screenshot_data: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

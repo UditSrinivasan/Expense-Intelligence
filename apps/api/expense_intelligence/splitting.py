@@ -74,6 +74,14 @@ class ComponentInput(BaseModel):
     strategy: Literal["equal", "percentage", "exact", "weighted", "quantity", "usage", "time"]
     shares: list[ShareInput] = Field(min_length=1, max_length=100)
     category_id: uuid.UUID | None = None
+    kind: Literal["item", "discount", "tax", "service_charge", "delivery", "packaging", "tip", "rounding"] = "item"
+    non_discountable: bool = False
+    promotion_id: str | None = Field(default=None, min_length=1, max_length=80)
+    discount_mode: Literal["fixed", "percentage", "cashback"] | None = None
+    percentage: Decimal | None = Field(default=None, gt=0, le=100, max_digits=7, decimal_places=4)
+    cap: Decimal | None = Field(default=None, gt=0, max_digits=38, decimal_places=12)
+    minimum_order: Decimal | None = Field(default=None, ge=0, max_digits=38, decimal_places=12)
+    eligible_component_indexes: list[int] = Field(default_factory=list, max_length=100)
 
 
 class PayerInput(BaseModel):
@@ -119,6 +127,7 @@ class PreviewRead(BaseModel):
     allocation_version: str
     allocations: list[AllocationPreview]
     balances: list[BalancePreview]
+    components: list[dict]
 
 
 class ConfirmedRead(PreviewRead):
@@ -187,6 +196,69 @@ def _allocate(component: ComponentInput, quantum: Decimal) -> list[dict]:
     return [{"member_id": share.member_id, "input_value": share.value, "unrounded_amount": raw[index] * sign, "amount": (rounded[index] + (quantum if index in residual else 0)) * sign, "received_residual": index in residual} for index, share in enumerate(component.shares)]
 
 
+def _resolve_components(components: list[ComponentInput], quantum: Decimal) -> tuple[list[ComponentInput], list[dict]]:
+    resolved: list[ComponentInput] = []
+    remaining: dict[int, Decimal] = {}
+    promotion_ids: set[str] = set()
+    breakdown: list[dict] = []
+    for index, component in enumerate(components):
+        if component.kind != "discount":
+            if component.discount_mode or component.percentage is not None or component.eligible_component_indexes:
+                raise ValueError("Promotion rules are valid only on discount components")
+            resolved.append(component)
+            if component.kind == "item" and component.amount > 0 and not component.non_discountable:
+                remaining[index] = component.amount
+            breakdown.append({"index": index, "label": component.label, "kind": component.kind, "amount": component.amount, "basis": None})
+            continue
+        if component.discount_mode == "cashback":
+            raise ValueError("External cashback is not part of the payable bill; record it only after receipt")
+        if component.amount > 0:
+            raise ValueError("Discount amounts must be zero or negative")
+        if component.promotion_id:
+            if component.promotion_id in promotion_ids:
+                raise ValueError("A promotion may be applied only once per bill")
+            promotion_ids.add(component.promotion_id)
+        eligible = component.eligible_component_indexes or list(remaining)
+        if len(eligible) != len(set(eligible)) or any(item < 0 or item >= index for item in eligible):
+            raise ValueError("Discount eligibility must reference unique earlier components")
+        if any(item not in remaining for item in eligible):
+            raise ValueError("Discount eligibility includes a non-discountable or non-item component")
+        basis = sum((remaining[item] for item in eligible), Decimal(0))
+        mode = component.discount_mode or "fixed"
+        if component.minimum_order is not None and basis < component.minimum_order:
+            discount = Decimal(0)
+        elif mode == "percentage":
+            if component.percentage is None:
+                raise ValueError("Percentage discounts require a percentage")
+            discount = (basis * component.percentage / Decimal(100)).quantize(quantum, rounding=ROUND_DOWN)
+            if component.cap is not None:
+                discount = min(discount, component.cap)
+        else:
+            if component.percentage is not None:
+                raise ValueError("Fixed discounts cannot include a percentage")
+            discount = abs(component.amount)
+            if component.cap is not None:
+                discount = min(discount, component.cap)
+        if discount > basis:
+            raise ValueError("Discount cannot exceed the remaining eligible item value")
+        if discount:
+            unapplied = discount
+            for item in sorted(eligible, key=lambda value: (-remaining[value], value)):
+                share = min(remaining[item], (discount * remaining[item] / basis).quantize(quantum, rounding=ROUND_DOWN))
+                remaining[item] -= share
+                unapplied -= share
+            for item in sorted(eligible):
+                if unapplied <= 0:
+                    break
+                share = min(remaining[item], unapplied)
+                remaining[item] -= share
+                unapplied -= share
+        next_component = component.model_copy(update={"amount": -discount})
+        resolved.append(next_component)
+        breakdown.append({"index": index, "label": component.label, "kind": "discount", "amount": -discount, "basis": basis, "mode": mode, "percentage": component.percentage, "cap": component.cap, "minimum_order": component.minimum_order, "eligible_component_indexes": eligible})
+    return resolved, breakdown
+
+
 def preview(session: Session, group_id: uuid.UUID, payload: ExpenseInput) -> dict:
     valid_members = _member_ids(session, group_id)
     if len({payer.member_id for payer in payload.payers}) != len(payload.payers):
@@ -195,15 +267,16 @@ def preview(session: Session, group_id: uuid.UUID, payload: ExpenseInput) -> dic
     if not referenced <= valid_members:
         raise ValueError("Every payer and participant must be an active group member")
     quantum = QUANTA.get(payload.currency, Decimal("0.01"))
+    components, breakdown = _resolve_components(payload.components, quantum)
     if payload.total != payload.total.quantize(quantum):
         raise ValueError("Total must use the currency's minor-unit precision")
     if sum((payer.amount for payer in payload.payers), Decimal(0)) != payload.total:
         raise ValueError("Payer amounts must equal the expense total")
-    if sum((component.amount for component in payload.components), Decimal(0)) != payload.total:
+    if sum((component.amount for component in components), Decimal(0)) != payload.total:
         raise ValueError("Component amounts must equal the expense total")
     allocations = []
     owed = defaultdict(Decimal)
-    for index, component in enumerate(payload.components):
+    for index, component in enumerate(components):
         rows = _allocate(component, quantum)
         if sum((row["amount"] for row in rows), Decimal(0)) != component.amount:
             raise ValueError("Allocation reconciliation failed")
@@ -211,6 +284,8 @@ def preview(session: Session, group_id: uuid.UUID, payload: ExpenseInput) -> dic
             row["component_index"] = index
             row["component_label"] = component.label
             owed[row["member_id"]] += row["amount"]
+            if owed[row["member_id"]] < 0:
+                raise ValueError("Discounts cannot create a negative participant allocation")
         allocations.extend(rows)
     paid = defaultdict(Decimal)
     for payer in payload.payers:
@@ -218,7 +293,7 @@ def preview(session: Session, group_id: uuid.UUID, payload: ExpenseInput) -> dic
     balances = [{"member_id": member_id, "paid": paid[member_id], "owed": owed[member_id], "balance": paid[member_id] - owed[member_id]} for member_id in sorted(paid.keys() | owed.keys(), key=str)]
     if sum((row["balance"] for row in balances), Decimal(0)) != 0:
         raise ValueError("Balance reconciliation failed")
-    return {"allocation_version": "minor-units-v1", "allocations": allocations, "balances": balances}
+    return {"allocation_version": "minor-units-v1", "allocations": allocations, "balances": balances, "components": breakdown, "_resolved_components": components}
 
 
 def _validated_source(session: Session, user_id: uuid.UUID, payload: ExpenseInput) -> ReceiptDocument | None:
@@ -387,7 +462,8 @@ def confirm_expense(group_id: uuid.UUID, payload: ExpenseInput, user: CurrentUse
     if group.archived_at is not None:
         raise HTTPException(409, "Archived groups cannot accept new expenses")
     receipt = _validated_source(session, user.id, payload)
-    category_ids = {component.category_id for component in payload.components if component.category_id} | ({payload.category_id} if payload.category_id else set())
+    resolved_components = result["_resolved_components"]
+    category_ids = {component.category_id for component in resolved_components if component.category_id} | ({payload.category_id} if payload.category_id else set())
     if category_ids:
         from .classification import category_for_owner
         if any(not category_for_owner(session, user.id, category_id) for category_id in category_ids):
@@ -400,7 +476,7 @@ def confirm_expense(group_id: uuid.UUID, payload: ExpenseInput, user: CurrentUse
     for payer in payload.payers:
         session.add(ExpensePayer(expense_id=expense.id, member_id=payer.member_id, amount=payer.amount))
     components = []
-    for component in payload.components:
+    for component in resolved_components:
         row = ExpenseComponent(expense_id=expense.id, label=component.label, amount=component.amount, strategy=component.strategy, category_id=component.category_id)
         session.add(row); session.flush(); components.append(row)
     for allocation in result["allocations"]:

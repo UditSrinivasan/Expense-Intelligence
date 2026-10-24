@@ -3,8 +3,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Profile = { display_name:string; country_code:"IN"|"GB"; locale:"en-IN"|"en-GB"; home_currency:string; display_currency:string; time_zone:string; onboarding_completed:boolean };
-const defaults: Profile = { display_name:"", country_code:"IN", locale:"en-IN", home_currency:"INR", display_currency:"INR", time_zone:"Asia/Kolkata", onboarding_completed:false };
+type Profile = { display_name:string; country_code:"IN"|"GB"; locale:"en-IN"|"en-GB"; home_currency:string; display_currency:string; time_zone:string; theme:"light"|"dark"|"system"; accent:"ocean"|"emerald"|"violet"|"amber"|"coral"|"slate"; onboarding_completed:boolean };
+const defaults: Profile = { display_name:"", country_code:"IN", locale:"en-IN", home_currency:"INR", display_currency:"INR", time_zone:"Asia/Kolkata", theme:"system", accent:"ocean", onboarding_completed:false };
 
 export function ProfileForm({ onboarding = false }: { onboarding?: boolean }) {
   const router = useRouter();

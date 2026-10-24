@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     supabase_jwt_audience: str = "authenticated"
     web_origin: str = "http://localhost:3000"
     invited_user_emails: str = ""
+    feedback_admin_emails: str = ""
     rate_limit_enabled: bool = True
     database_pool_size: int = 5
     database_max_overflow: int = 2
@@ -73,6 +74,10 @@ class Settings(BaseSettings):
     @property
     def invited_email_set(self) -> frozenset[str]:
         return frozenset(value.strip().casefold() for value in self.invited_user_emails.split(",") if value.strip())
+
+    @property
+    def feedback_admin_email_set(self) -> frozenset[str]:
+        return frozenset(value.strip().casefold() for value in self.feedback_admin_emails.split(",") if value.strip())
 
 
 @lru_cache

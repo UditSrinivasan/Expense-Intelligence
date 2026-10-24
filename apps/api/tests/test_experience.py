@@ -2,7 +2,9 @@ import uuid
 
 from sqlalchemy import select
 
-from expense_intelligence.models import ChatMessage, ChatThread, User
+from expense_intelligence.config import Settings, get_settings
+from expense_intelligence.main import app
+from expense_intelligence.models import ChatMessage, ChatThread, ProductFeedback, User
 
 
 USER = "00000000-0000-4000-8000-000000000001"
@@ -51,3 +53,25 @@ def test_assistant_feedback_requires_owned_assistant_message(client, db):
     assert accepted.status_code == 201
     denied = client.post("/v1/feedback", headers=auth(OTHER), json={"kind": "assistant", "sentiment": "helpful", "target_id": str(message.id)})
     assert denied.status_code == 404
+
+
+def test_private_beta_feedback_is_minimal_and_admin_review_is_explicit(client, db):
+    payload = {"kind": "calculation", "sentiment": "report", "description": "Synthetic rounding concern", "steps": "Open synthetic split", "page_path": "/groups/tutorial", "viewport": "390x844", "contact_allowed": False}
+    accepted = client.post("/v1/feedback", headers=auth(), json=payload)
+    assert accepted.status_code == 201, accepted.text
+    row = db.get(ProductFeedback, uuid.UUID(accepted.json()["id"]))
+    assert row.description == "Synthetic rounding concern"
+    assert row.owner_user_id == db.scalar(select(User.id).where(User.auth_subject == f"dev:{USER}"))
+    assert client.get("/v1/feedback", headers=auth()).status_code == 404
+    admin_email = f"dev+{USER}@example.invalid"
+    app.dependency_overrides[get_settings] = lambda: Settings(app_env="test", allow_dev_auth=True, feedback_admin_emails=admin_email)
+    reviewed = client.get("/v1/feedback", headers=auth())
+    assert reviewed.status_code == 200
+    assert reviewed.json()[0]["description"] == "Synthetic rounding concern"
+
+
+def test_feedback_rejects_queries_and_oversized_or_untyped_content(client):
+    missing = client.post("/v1/feedback", headers=auth(), json={"kind": "bug", "sentiment": "report"})
+    assert missing.status_code == 422
+    query = client.post("/v1/feedback", headers=auth(), json={"kind": "bug", "sentiment": "report", "description": "Synthetic", "page_path": "/transactions?account=private"})
+    assert query.status_code == 422
