@@ -55,6 +55,10 @@ class UserPreference(Base):
     display_currency: Mapped[str] = mapped_column(String(3), default="INR")
     time_zone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata")
     onboarding_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    tour_state: Mapped[str] = mapped_column(String(20), default="never_started")
+    tour_step: Mapped[int] = mapped_column(Integer, default=0)
+    checklist_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    dashboard_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user: Mapped[User] = relationship(back_populates="preference")
 
 
@@ -494,6 +498,18 @@ class UserMemory(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProductFeedback(Base):
+    __tablename__ = "product_feedback"
+    __table_args__ = (Index("ix_product_feedback_owner_created", "owner_user_id", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    sentiment: Mapped[str] = mapped_column(String(16))
+    target_id: Mapped[str | None] = mapped_column(String(80))
+    reason: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class InsightRecord(Base):

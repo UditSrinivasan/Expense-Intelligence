@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { ProductGuide } from "./product-guide";
 
 const destinations = [
   { href: "/", label: "Overview", mark: "OV" },
@@ -24,7 +25,7 @@ function isActive(pathname: string, href: string) {
 
 function Navigation({ pathname }: { pathname: string }) {
   return <nav className="app-nav" aria-label="Primary navigation">
-    {destinations.map((item) => <Link href={item.href} key={item.label} aria-current={isActive(pathname, item.href) ? "page" : undefined}>
+    {destinations.map((item) => <Link href={item.href} key={item.label} data-tour={`nav-${item.mark.toLowerCase()}`} aria-current={isActive(pathname, item.href) ? "page" : undefined}>
       <span aria-hidden="true">{item.mark}</span>{item.label}
     </Link>)}
   </nav>;
@@ -58,8 +59,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     </aside>
     <header className="mobile-app-header">
       <Link className="app-brand" href="/"><span>EI</span><strong>Expense Intelligence</strong></Link>
-      <details className="mobile-menu"><summary aria-label="Open navigation">Menu</summary><Navigation pathname={pathname}/><AccountActions/></details>
+      <details className="mobile-menu"><summary aria-label="Open navigation">Open navigation</summary><Navigation pathname={pathname}/><AccountActions/></details>
     </header>
     <div className="app-content"><Breadcrumbs pathname={pathname}/>{children}</div>
+    <ProductGuide pathname={pathname}/>
   </div>;
 }
