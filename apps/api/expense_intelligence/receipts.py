@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -67,6 +67,8 @@ class ReceiptCandidate(BaseModel):
 
 
 class ReceiptStage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     idempotency_key: uuid.UUID
     account_id: uuid.UUID | None = None
     source_hash: str = Field(pattern="^[a-f0-9]{64}$")

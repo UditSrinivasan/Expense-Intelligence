@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
 from sqlalchemy import select
 
 from expense_intelligence.flags import FlagName, is_enabled, seed_flags
@@ -69,6 +70,17 @@ def test_manual_transaction_account_must_belong_to_user(client):
     created = client.post("/v1/transactions", headers=auth(USER_A), json=payload)
     assert created.status_code == 201 and created.json()["account_id"] == account["id"]
     assert client.post("/v1/transactions", headers=auth(USER_B), json=payload).status_code == 404
+
+
+@pytest.mark.parametrize("currency", ["INR", "GBP", "USD", "EUR"])
+def test_first_class_currency_is_retained_and_never_cross_aggregated(client, currency):
+    payload = {"description": f"Synthetic {currency} purchase", "direction": "expense", "original_amount": "10.25", "original_currency": currency, "effective_date": "2026-10-24"}
+    created = client.post("/v1/transactions", headers=auth(USER_A), json=payload)
+    assert created.status_code == 201
+    assert created.json()["original_currency"] == currency
+    dashboard = client.get(f"/v1/dashboard?currency={currency}", headers=auth(USER_A)).json()
+    assert Decimal(dashboard["expenses"]) == Decimal("10.25")
+    assert dashboard["currency"] == currency
 
 
 def test_profiles_are_private_and_onboarding_is_explicit(client):

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .auth import CurrentUser, get_current_user
 from .database import get_db
 from .models import AuditEvent, Category, ExpenseAllocation, ExpenseComponent, ExpenseGroup, ExpensePayer, GroupMember, GroupRole, Settlement, SharedExpense, SplitTemplate
+from .schemas import SUPPORTED_CURRENCIES
 from .splitting import ComponentInput, ExpenseInput, QUANTA, _allocate, _membership, preview
 
 router = APIRouter(prefix="/v1/groups", tags=["group-finance"])
@@ -33,7 +34,9 @@ class SettlementCreate(BaseModel):
     @field_validator("currency")
     @classmethod
     def normalize_currency(cls, value: str) -> str:
-        return value.upper()
+        value = value.upper()
+        if value not in SUPPORTED_CURRENCIES: raise ValueError("unsupported currency")
+        return value
 
 
 class SettlementRead(BaseModel):
@@ -67,7 +70,9 @@ class TemplateCreate(BaseModel):
     @field_validator("currency")
     @classmethod
     def template_currency(cls, value: str) -> str:
-        return value.upper()
+        value = value.upper()
+        if value not in SUPPORTED_CURRENCIES: raise ValueError("unsupported currency")
+        return value
 
 
 class TemplateUpdate(TemplateCreate):
@@ -102,7 +107,7 @@ def _persist_expense(session: Session, group_id: uuid.UUID, user_id: uuid.UUID, 
     session.add(expense); session.flush()
     for payer in payload.payers: session.add(ExpensePayer(expense_id=expense.id, member_id=payer.member_id, amount=payer.amount))
     components = []
-    for component in payload.components:
+    for component in result["_resolved_components"]:
         row = ExpenseComponent(expense_id=expense.id, label=component.label, amount=component.amount, strategy=component.strategy, category_id=component.category_id)
         session.add(row); session.flush(); components.append(row)
     for allocation in result["allocations"]:

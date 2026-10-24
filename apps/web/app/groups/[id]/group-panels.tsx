@@ -79,7 +79,7 @@ export type Analytics = {
   currency_policy: string;
 };
 const money = (amount: string, currency: string) =>
-  new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", {
+  new Intl.NumberFormat(undefined, {
     style: "currency",
     currency,
   }).format(Number(amount));

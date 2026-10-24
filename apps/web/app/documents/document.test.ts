@@ -39,6 +39,20 @@ test("extracts conservative statement rows", () => {
   assert.equal(rows[0].amount, "125.50");
 });
 
+test("detects and reconciles first-class USD and EUR documents", () => {
+  const usd = extractReceipt(
+    "DEMO CAFE\n18/10/2026\nLunch $12.50\nTax $1.00\nTOTAL $13.50",
+  );
+  const eur = extractStatement(
+    "Statement EUR\n18/10/2026 MARKET EUR 20.00",
+  );
+  assert.equal(usd.currency, "USD");
+  assert.equal(usd.total, "13.50");
+  assert.deepEqual(usd.issues, []);
+  assert.equal(eur[0].currency, "EUR");
+  assert.equal(eur[0].amount, "20.00");
+});
+
 test("reports receipt mismatch instead of inventing reconciliation", () => {
   const receipt = extractReceipt("SHOP\n18/10/2026\nItem £9.99\nTOTAL £10.00");
   assert.match(receipt.issues.join(" "), /reconcile/);

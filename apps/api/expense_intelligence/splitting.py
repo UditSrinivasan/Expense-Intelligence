@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .auth import CurrentUser, get_current_user
 from .database import get_db
 from .models import AuditEvent, ExpenseAllocation, ExpenseComponent, ExpenseGroup, ExpensePayer, GroupInvitation, GroupMember, GroupRole, ReceiptDocument, SharedExpense
+from .schemas import SUPPORTED_CURRENCIES
 
 router = APIRouter(prefix="/v1/groups", tags=["groups"])
 invites_router = APIRouter(prefix="/v1/group-invitations", tags=["group-invitations"])
@@ -103,7 +104,9 @@ class ExpenseInput(BaseModel):
     @field_validator("currency")
     @classmethod
     def uppercase_expense_currency(cls, value: str) -> str:
-        return value.upper()
+        value = value.upper()
+        if value not in SUPPORTED_CURRENCIES: raise ValueError("unsupported currency")
+        return value
 
 
 class AllocationPreview(BaseModel):

@@ -15,7 +15,7 @@ const apiUrl = "/api/backend";
 const headers = { "Content-Type": "application/json" };
 const initialEnd = new Date().toISOString().slice(0, 10);
 const initialStart = new Date(Date.now() - 89 * 86_400_000).toISOString().slice(0, 10);
-const money = (value: string, currency: string) => new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", { style: "currency", currency }).format(Number(value));
+const money = (value: string, currency: string) => new Intl.NumberFormat(undefined, { style: "currency", currency }).format(Number(value));
 const day = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 
 export default function Home() {

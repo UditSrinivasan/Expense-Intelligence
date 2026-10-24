@@ -3,7 +3,7 @@ from decimal import Decimal, ROUND_HALF_EVEN
 
 from langchain_core.tools import tool
 
-from .fixtures import SYNTHETIC_FX, SYNTHETIC_PREFERENCES, SYNTHETIC_TRANSACTIONS, SYNTHETIC_UNTRUSTED_NOTE
+from .fixtures import SYNTHETIC_INR_PER_UNIT, SYNTHETIC_PREFERENCES, SYNTHETIC_TRANSACTIONS, SYNTHETIC_UNTRUSTED_NOTE
 
 
 def _rows(start: date | None = None, end: date | None = None, category: str | None = None):
@@ -46,9 +46,9 @@ def get_category_breakdown(start: date, end: date) -> dict:
 def convert_currency(amount: Decimal, base: str, quote: str) -> dict:
     """Convert a synthetic-demo amount using a fixed, clearly labelled showcase rate."""
     base, quote = base.upper(), quote.upper()
-    rate = Decimal("1") if base == quote else SYNTHETIC_FX.get((base, quote))
-    if rate is None:
-        return {"error": "Unsupported synthetic currency pair", "supported": ["INR/GBP", "GBP/INR"]}
+    if base not in SYNTHETIC_INR_PER_UNIT or quote not in SYNTHETIC_INR_PER_UNIT:
+        return {"error": "Unsupported synthetic currency pair", "supported_currencies": sorted(SYNTHETIC_INR_PER_UNIT)}
+    rate = SYNTHETIC_INR_PER_UNIT[base] / SYNTHETIC_INR_PER_UNIT[quote]
     result = (amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_EVEN)
     return {"amount": str(amount), "base": base, "quote": quote, "rate": str(rate), "result": str(result), "rate_type": "synthetic_showcase", "data_mode": "synthetic_demo"}
 

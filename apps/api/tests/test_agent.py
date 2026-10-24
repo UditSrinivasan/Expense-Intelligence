@@ -19,6 +19,8 @@ def test_synthetic_tools_are_exact_and_labelled():
     assert comparison["difference"] == "1425.65"
     assert get_category_breakdown.invoke({"start": "2026-10-01", "end": "2026-10-31"})["categories"]["Groceries"] == "3160.75"
     assert convert_currency.invoke({"amount": Decimal("1000"), "base": "INR", "quote": "GBP"})["result"] == "8.55"
+    assert convert_currency.invoke({"amount": Decimal("10"), "base": "USD", "quote": "EUR"})["result"] == "9.20"
+    assert convert_currency.invoke({"amount": Decimal("10"), "base": "EUR", "quote": "USD"})["result"] == "10.87"
 
 
 def test_chat_history_flag_is_independent(client, db, monkeypatch):

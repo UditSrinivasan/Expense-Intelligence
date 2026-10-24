@@ -239,6 +239,14 @@ export default function DocumentsPage() {
     const result = await response.json();
     if (response.ok) {
       setRecord(result);
+      worker.current?.terminate();
+      worker.current = undefined;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = undefined;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl("");
+      setFile(undefined);
+      setExtraction(undefined);
       setStatus(
         "Receipt staged. Choose a ledger match or open the reviewed components in Split Builder.",
       );
@@ -491,6 +499,8 @@ export default function DocumentsPage() {
               >
                 <option>INR</option>
                 <option>GBP</option>
+                <option>USD</option>
+                <option>EUR</option>
               </select>
             </label>
             <label>

@@ -213,7 +213,7 @@ class FlagUpdate(BaseModel):
 
 
 class DemoMemoryWrite(BaseModel):
-    preferred_currency: Literal["INR", "GBP"]
+    preferred_currency: Literal["INR", "GBP", "USD", "EUR"]
     response_style: Literal["concise", "detailed"]
 
 

@@ -2,6 +2,8 @@
 
 Status: **safe preparation and disposable rehearsal complete; no hosted schema, provider account, or deployment has been changed**.
 
+Final integration addendum (25 October 2026): PRs #6 and #7 are integrated; migration `0014_beta_refinement`, its feedback-administration authorization, the additional RLS policies, the INR/GBP/USD/EUR contract and original-document privacy boundary are now part of this approval. See [the final readiness record](26-final-integration-readiness.md). Provider limits were rechecked against first-party documentation on that date; account-specific entitlement and usage must still be verified in each provider dashboard before any resource is created.
+
 This is the single approval checkpoint for the reviewed hosted database sequence and the proposed providers. Approval does not authorize billing, destructive restores, importing existing private records, enabling AI, or broadening the invited-user list.
 
 ## Provider decision
@@ -54,9 +56,9 @@ Affected data: existing rows are not replaced or deleted. Alembic adds only migr
 4. Set strong random passwords for both roles in a secret-safe SQL session. Store them only in provider secret stores. Never place them in SQL files, shell history, GitHub, or screenshots.
 5. Connect directly as `expense_migrator` with `sslmode=verify-full` and the Supabase CA. Run `alembic upgrade head`. Record the resulting head and table owners.
 6. In one controlled migrator session, run `supabase/rls.sql`, followed by `supabase/application-role.sql`.
-7. Verify `expense_app` flags are all false, table ownership is zero, expected table/function privileges exist, RLS is enabled, and an unscoped connection returns zero personal and group rows.
+7. Verify `expense_app` flags are all false, table ownership is zero, expected table/function privileges exist, RLS (including `0014` feedback administration policies) is enabled, and an unscoped connection returns zero personal, group and feedback rows.
 8. Configure the API runtime with the TLS Supavisor **session-mode** connection for `expense_app`, pool 5/overflow 2. Do not use the owner, migrator, Supabase service-role key, or transaction pooler initially.
-9. Run synthetic two-user hosted tests: provisioning, independent transactions, private groups, authorized shared group, pooled context reset, invite claim, exact financial reconciliation, logout, and denial after invite revocation.
+9. Run synthetic two-user hosted tests: provisioning, independent INR/GBP/USD/EUR transactions, currency-separated analytics, historical-FX provenance, private groups, authorized shared group, pooled context reset, invite claim, exact financial reconciliation, feedback administration, logout, and denial after invite revocation. Send structured synthetic records only; do not upload original financial documents.
 10. Only after those pass, configure the exact frontend/API HTTPS origins and Google/Supabase redirect allowlists, then invite the supplied real addresses.
 
 ### Disposable rehearsal result
