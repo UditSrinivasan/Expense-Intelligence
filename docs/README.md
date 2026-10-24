@@ -37,6 +37,7 @@ This directory is the pre-implementation specification. It contains no applicati
 | Settlements, templates and group intelligence Milestone B | [17-group-finance-milestone-b.md](17-group-finance-milestone-b.md) |
 | Browser-local financial document ingestion Milestone C1 | [18-document-ingestion-c1.md](18-document-ingestion-c1.md) |
 | PDF, OCR and receipt intelligence Milestone C2 | [19-pdf-ocr-receipts-c2.md](19-pdf-ocr-receipts-c2.md) |
+| G1 hosted security foundation and approval gate | [23-g1-hosted-security-foundation.md](23-g1-hosted-security-foundation.md) |
 
 ## Non-goals for v1
 

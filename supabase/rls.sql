@@ -11,14 +11,19 @@ create or replace function app_private.is_group_member(target uuid) returns bool
 language sql stable security definer set search_path = public
 as $$ select exists(select 1 from group_members where group_id = target and linked_user_id = app_private.user_id() and active) $$;
 
+create or replace function app_private.is_group_owner(target uuid) returns boolean
+language sql stable security definer set search_path = public
+as $$ select exists(select 1 from group_members where group_id = target and linked_user_id = app_private.user_id() and active and role = 'owner') $$;
+
 revoke all on function app_private.user_id() from public;
 revoke all on function app_private.is_group_member(uuid) from public;
+revoke all on function app_private.is_group_owner(uuid) from public;
 
 -- Direct owner-scoped tables.
 do $$
 declare table_name text;
 begin
-  foreach table_name in array array['budgets','budget_revisions','category_aliases','chat_checkpoints','chat_messages','chat_threads','classification_rules','financial_accounts','import_batches','import_mapping_profiles','import_rows','insight_records','merchant_aliases','merchants','receipt_documents','recurring_decisions','transactions','transaction_allocations','user_memories'] loop
+  foreach table_name in array array['budgets','budget_revisions','category_aliases','chat_checkpoints','chat_messages','chat_threads','classification_rules','financial_accounts','import_batches','import_mapping_profiles','import_rows','insight_records','merchant_aliases','merchants','product_feedback','receipt_documents','recurring_decisions','transactions','transaction_allocations','user_memories'] loop
     execute format('alter table %I enable row level security', table_name);
     execute format('create policy owner_isolation on %I for all using (owner_user_id = app_private.user_id()) with check (owner_user_id = app_private.user_id())', table_name);
   end loop;
@@ -45,14 +50,28 @@ create policy category_write on categories for all using (owner_user_id = app_pr
 alter table expense_groups enable row level security;
 create policy group_read on expense_groups for select using (app_private.is_group_member(id));
 create policy group_insert on expense_groups for insert with check (app_private.user_id() is not null);
-create policy group_write on expense_groups for update using (app_private.is_group_member(id));
+create policy group_write on expense_groups for update using (app_private.is_group_owner(id)) with check (app_private.is_group_owner(id));
 alter table group_members enable row level security;
 create policy member_read on group_members for select using (app_private.is_group_member(group_id));
 create policy member_insert on group_members for insert with check (
-  app_private.is_group_member(group_id) or
+  app_private.is_group_owner(group_id) or
   (linked_user_id = app_private.user_id() and not exists(select 1 from group_members existing where existing.group_id = group_members.group_id))
 );
-create policy member_write on group_members for update using (app_private.is_group_member(group_id));
+create policy member_write on group_members for update
+using (
+  app_private.is_group_owner(group_id) or
+  (linked_user_id is null and exists(select 1 from group_invitations invitation where invitation.guest_member_id = group_members.id and invitation.invited_email = current_setting('app.current_user_email', true) and invitation.revoked_at is null and invitation.claimed_at is null and invitation.expires_at > now()))
+)
+with check (app_private.is_group_owner(group_id) or linked_user_id = app_private.user_id());
+
+alter table group_invitations enable row level security;
+create policy invitation_owner on group_invitations for all
+using (app_private.is_group_owner(group_id)) with check (app_private.is_group_owner(group_id));
+create policy invitation_claim on group_invitations for select
+using (invited_email = current_setting('app.current_user_email', true) and revoked_at is null and claimed_at is null and expires_at > now());
+create policy invitation_claim_update on group_invitations for update
+using (invited_email = current_setting('app.current_user_email', true) and revoked_at is null and claimed_at is null and expires_at > now())
+with check (invited_email = current_setting('app.current_user_email', true));
 
 do $$
 declare table_name text;
@@ -73,5 +92,6 @@ create policy group_isolation on expense_allocations for all using (exists(selec
 -- Reference data is read-only through the application role.
 alter table fx_rates enable row level security;
 create policy authenticated_read on fx_rates for select using (app_private.user_id() is not null);
+create policy authenticated_write on fx_rates for insert with check (app_private.user_id() is not null);
 alter table feature_flags enable row level security;
 create policy authenticated_read on feature_flags for select using (app_private.user_id() is not null);

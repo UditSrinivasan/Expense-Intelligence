@@ -1,10 +1,12 @@
 import uuid
 import json
+import logging
+import time
 from datetime import date
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,17 +21,28 @@ from .flags import FlagName, is_enabled
 from .models import AuditEvent, Budget, BudgetRevision, BudgetStatus, ClassificationRule, FeatureFlag, Merchant, UserMemory, UserPreference
 from .schemas import AgentChatRequest, AgentReply, BudgetCreate, BudgetEvaluation, BudgetRead, BudgetRevisionRead, BudgetUpdate, BulkCategorizationPreview, BulkCategorizationRequest, BulkCategorizationResult, CategorizationResult, CategorizeTransaction, CategoryCreate, CategoryRead, CategorySpendRead, CategoryUpdate, ChatMessageRead, ChatThreadRead, ClassificationRuleRead, DashboardSummary, DemoMemoryRead, DemoMemoryWrite, FlagRead, FlagUpdate, FxConversionRead, PreferenceRead, PreferenceUpdate, ProfileRead, ProfileUpdate, RuleUpdate, TransactionCreate, TransactionRead
 from .services import FxService, create_transaction, dashboard_summary, list_transactions, update_preferences
-from .splitting import router as groups_router
+from .splitting import invites_router, router as groups_router
 from .group_finance import router as group_finance_router
 from .ingestion import router as ingestion_router
 from .receipts import router as receipts_router
 from .analytics import router as analytics_router
 from .experience import router as experience_router
 from .agent.providers import selected_model
+from .rate_limit import rate_limit_requests
 
 
 settings = get_settings()
+logger = logging.getLogger("expense_intelligence.requests")
 app = FastAPI(title="Expense Intelligence API", version="0.1.0")
+app.middleware("http")(rate_limit_requests)
+
+
+@app.middleware("http")
+async def redacted_request_log(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    logger.info("request method=%s path=%s status=%s elapsed_ms=%s", request.method, request.url.path, response.status_code, round((time.perf_counter() - started) * 1000))
+    return response
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.web_origin],
@@ -38,6 +51,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"] + (["X-Dev-User-Id"] if settings.app_env in {"local", "test"} and settings.allow_dev_auth else []),
 )
 app.include_router(groups_router)
+app.include_router(invites_router)
 app.include_router(group_finance_router)
 app.include_router(ingestion_router)
 app.include_router(receipts_router)
@@ -48,6 +62,16 @@ app.include_router(experience_router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "environment": settings.app_env}
+
+
+@app.get("/ready")
+def ready(session: Session = Depends(get_db)):
+    try:
+        session.execute(select(1)).scalar_one()
+    except Exception as exc:
+        logger.warning("readiness database check failed: %s", type(exc).__name__)
+        raise HTTPException(503, "Database is unavailable") from exc
+    return {"status": "ready", "database": session.get_bind().dialect.name, "agent_mode": settings.agent_mode}
 
 
 @app.get("/v1/preferences", response_model=PreferenceRead)
