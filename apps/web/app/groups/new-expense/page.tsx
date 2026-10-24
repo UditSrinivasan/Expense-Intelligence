@@ -647,7 +647,7 @@ export default function GuidedExpensePage() {
     router.push(`/groups/${selected.id}/expenses/${result.id}`);
   }
   const money = (value: string) =>
-    new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", {
+    new Intl.NumberFormat(undefined, {
       style: "currency",
       currency,
     }).format(Number(value));

@@ -61,6 +61,8 @@ class CandidateWrite(BaseModel):
 
 
 class StageImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     idempotency_key: uuid.UUID
     account_id: uuid.UUID
     source_hash: str = Field(pattern="^[a-f0-9]{64}$")

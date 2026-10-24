@@ -63,3 +63,12 @@ def test_receipt_match_is_conservative_on_date_currency_and_amount(client, db):
     receipt = candidate(categories, "INR")
     response = stage(client, acc["id"], receipt, "71000000-0000-4000-8000-000000000003")
     assert response.status_code == 201 and response.json()["matches"] == []
+
+
+def test_receipt_contract_rejects_original_bytes_and_extracted_text(client, db):
+    acc = account(client, "EUR")
+    categories = [row["id"] for row in client.get("/v1/categories", headers=headers()).json() if row["parent_id"]][:2]
+    payload = {"idempotency_key": str(uuid.uuid4()), "account_id": acc["id"], "source_hash": "e" * 64, "file_name": "synthetic-eu.png", "source_format": "png", "document_type": "receipt", "page_count": 1, "used_ocr": True, "elapsed_ms": 100, "candidate": candidate(categories, "EUR"), "extracted_text": "private OCR text"}
+    response = client.post("/v1/receipts", headers=headers(), json=payload)
+    assert response.status_code == 422
+    assert db.query(ReceiptDocument).count() == 0

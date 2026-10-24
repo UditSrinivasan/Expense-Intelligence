@@ -1,7 +1,7 @@
 from decimal import Decimal
 import uuid
 
-from expense_intelligence.models import SharedExpense
+from expense_intelligence.models import ExpenseComponent, SharedExpense
 
 from test_splitting import USER_A, USER_B, create_group, headers
 
@@ -101,6 +101,16 @@ def test_correction_member_lifecycle_multicurrency_suggestions_and_analytics(cli
     assert [row["status"] for row in activity["expenses"]] == ["confirmed", "reversed"]
     assert activity["expenses"][0]["corrects_expense_id"] == expense["id"]
     assert client.get(f"/v1/groups/{group['id']}/activity", headers=headers(USER_B)).status_code == 404
+
+
+def test_correction_persists_resolved_percentage_discount(client, db):
+    group, owner, guest, original, expense = setup_debt(client, currency="EUR")
+    shares = [{"member_id": owner["id"]}, {"member_id": guest["id"]}]
+    replacement = {**original, "idempotency_key": "34000000-0000-4000-8000-000000000099", "total": "90.00", "currency": "EUR", "payers": [{"member_id": owner["id"], "amount": "90.00"}], "components": [{"label": "Meal", "amount": "100.00", "strategy": "equal", "shares": shares}, {"label": "10% voucher", "kind": "discount", "discount_mode": "percentage", "percentage": "10", "amount": "0.00", "strategy": "equal", "shares": shares}]}
+    corrected = client.post(f"/v1/groups/{group['id']}/expenses/{expense['id']}/correct", headers=headers(), json={"expected_group_version": 3, "replacement": replacement})
+    assert corrected.status_code == 201, corrected.text
+    persisted = db.query(ExpenseComponent).filter(ExpenseComponent.expense_id == uuid.UUID(corrected.json()["replacement_expense_id"]), ExpenseComponent.label == "10% voucher").one()
+    assert persisted.amount == Decimal("-10.000000000000")
 
 
 def test_archived_group_is_read_only_for_settlements_and_templates(client):

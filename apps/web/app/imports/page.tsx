@@ -271,6 +271,9 @@ export default function ImportsPage() {
       const result = await response.json();
       if (response.ok) {
         setBatch(result);
+        worker.current?.terminate();
+        worker.current = undefined;
+        setSelectedFile(undefined);
         setStatus(
           "Structured candidates staged. Raw file bytes stayed in this browser.",
         );

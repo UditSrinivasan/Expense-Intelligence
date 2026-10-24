@@ -85,3 +85,11 @@ def test_rejects_bad_hash_foreign_account_and_row_limit_contract(client):
     assert invalid.status_code == 422
     foreign = client.post("/v1/imports/stage", headers=headers(USER_B), json={"idempotency_key": str(uuid.uuid4()), "account_id": acc["id"], "source_hash": "b" * 64, "file_name": "x.csv", "file_format": "csv", "candidates": [candidate(2, "x", "expense", "1")]})
     assert foreign.status_code == 404
+
+
+def test_import_contract_rejects_original_document_content(client, db):
+    acc = account(client, "USD")
+    payload = {"idempotency_key": str(uuid.uuid4()), "account_id": acc["id"], "source_hash": "d" * 64, "file_name": "synthetic.csv", "file_format": "csv", "candidates": [candidate(2, "Demo", "expense", "12.50", "USD")], "raw_file": "data:text/csv;base64,cHJpdmF0ZQ=="}
+    response = client.post("/v1/imports/stage", headers=headers(), json=payload)
+    assert response.status_code == 422
+    assert db.query(ImportBatch).count() == 0

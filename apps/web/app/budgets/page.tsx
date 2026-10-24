@@ -48,7 +48,7 @@ export default function BudgetsPage() {
   }, []);
 
   const categoryNames = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
-  const money = (value: string, currency: string) => new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", { style: "currency", currency, maximumFractionDigits: currency === "JPY" ? 0 : currency === "KWD" ? 3 : 2 }).format(Number(value));
+  const money = (value: string, currency: string) => new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: currency === "JPY" ? 0 : currency === "KWD" ? 3 : 2 }).format(Number(value));
 
   async function saveBudget(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);

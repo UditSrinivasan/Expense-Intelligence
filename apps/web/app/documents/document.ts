@@ -53,7 +53,15 @@ export type DocumentTransaction = {
   source_page: number;
 };
 
-const moneyPattern = /(?:₹|£|INR|GBP)?\s*(-?\d[\d,]*\.\d{2})\s*$/i;
+const moneyPattern = /(?:₹|£|\$|€|INR|GBP|USD|EUR)?\s*(-?\d[\d,]*\.\d{2})\s*$/i;
+
+function detectCurrency(text: string): "INR" | "GBP" | "USD" | "EUR" {
+  if (/₹|\bINR\b/i.test(text)) return "INR";
+  if (/£|\bGBP\b/i.test(text)) return "GBP";
+  if (/€|\bEUR\b/i.test(text)) return "EUR";
+  if (/\$|\bUSD\b/i.test(text)) return "USD";
+  return "INR";
+}
 
 export function addMoney(values: string[]): string {
   const units = values.reduce((sum, value) => {
@@ -79,11 +87,7 @@ export function extractReceipt(text: string): ReceiptCandidate {
     .map((line) => line.trim())
     .filter((line) => Boolean(line) && !/^\[\[PAGE \d+\]\]$/.test(line))
     .slice(0, 500);
-  const currency = /₹|\bINR\b/i.test(text)
-    ? "INR"
-    : /£|\bGBP\b/i.test(text)
-      ? "GBP"
-      : "INR";
+  const currency = detectCurrency(text);
   const dateMatch = text.match(
     /\b(\d{4})[-/](\d{2})[-/](\d{2})\b|\b(\d{2})[/-](\d{2})[/-](\d{4})\b/,
   );
@@ -136,7 +140,8 @@ export function extractReceipt(text: string): ReceiptCandidate {
     } else {
       const label = line
         .slice(0, line.lastIndexOf(value.replace(/,/g, "")))
-        .replace(/[₹£]/g, "")
+        .replace(/[₹£$€]/g, "")
+        .replace(/\b(?:INR|GBP|USD|EUR)\b/gi, "")
         .trim();
       if (label)
         items.push({
@@ -178,11 +183,7 @@ export function extractReceipt(text: string): ReceiptCandidate {
 }
 
 export function extractStatement(text: string): DocumentTransaction[] {
-  const currency = /₹|\bINR\b/i.test(text)
-    ? "INR"
-    : /£|\bGBP\b/i.test(text)
-      ? "GBP"
-      : "INR";
+  const currency = detectCurrency(text);
   let sourcePage = 1;
   return text
     .split(/\r?\n/)
