@@ -31,8 +31,8 @@ test("opens a recent expense and copies its confirmed calculation", async ({ pag
 
 test("individual mode hides other members on mobile", async ({ page }) => {
   await page.goto(`/groups/${groupId}/expenses/${expenseId}`);
-  await page.locator("select").first().selectOption("individual");
-  await page.locator("select").nth(1).selectOption("a");
+  await page.getByLabel("Privacy level").selectOption("individual");
+  await page.locator(".share-panel label").filter({ hasText: /^Participant/ }).locator("select").selectOption("a");
   await expect(page.getByLabel("Share preview")).toHaveValue(/Asha:/);
   await expect(page.getByLabel("Share preview")).not.toHaveValue(/Sam:/);
 });

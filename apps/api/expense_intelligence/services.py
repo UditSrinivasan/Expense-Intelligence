@@ -22,7 +22,7 @@ def update_preferences(session: Session, user_id, update: PreferenceUpdate) -> U
     if preference is None:
         preference = UserPreference(user_id=user_id)
         session.add(preference)
-    for key, value in update.model_dump().items():
+    for key, value in update.model_dump(exclude_unset=True).items():
         setattr(preference, key, value)
     record_audit(session, user_id, "preferences.updated", "user_preference", str(user_id))
     session.commit()

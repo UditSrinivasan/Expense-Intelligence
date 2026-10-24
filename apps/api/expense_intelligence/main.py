@@ -96,7 +96,7 @@ def get_profile(user: CurrentUser = Depends(get_current_user), session: Session 
 @app.put("/v1/profile", response_model=ProfileRead)
 def put_profile(payload: ProfileUpdate, user: CurrentUser = Depends(get_current_user), session: Session = Depends(get_db)):
     preference = session.get(UserPreference, user.id)
-    for key, value in payload.model_dump().items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(preference, key, value)
     preference.onboarding_completed = True
     session.add(AuditEvent(actor_user_id=user.id, action="profile.updated", target_type="user_preference", target_id=str(user.id)))

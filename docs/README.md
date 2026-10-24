@@ -39,6 +39,7 @@ This directory is the pre-implementation specification. It contains no applicati
 | PDF, OCR and receipt intelligence Milestone C2 | [19-pdf-ocr-receipts-c2.md](19-pdf-ocr-receipts-c2.md) |
 | G1 hosted security foundation and approval gate | [23-g1-hosted-security-foundation.md](23-g1-hosted-security-foundation.md) |
 | G2 deployment provider and hosted-change approval packet | [24-g2-deployment-approval.md](24-g2-deployment-approval.md) |
+| G2.1 financial, appearance and beta-feedback refinement | [25-g2-1-prelaunch-refinement.md](25-g2-1-prelaunch-refinement.md) |
 
 ## Non-goals for v1
 

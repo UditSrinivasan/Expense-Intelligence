@@ -29,6 +29,10 @@ begin
   end loop;
 end $$;
 
+drop policy if exists product_feedback_admin_select on product_feedback;
+create policy product_feedback_admin_select on product_feedback for select
+using (coalesce(current_setting('app.feedback_admin', true), 'false') = 'true');
+
 alter table analytics_preferences enable row level security;
 create policy owner_isolation on analytics_preferences for all using (user_id = app_private.user_id()) with check (user_id = app_private.user_id());
 alter table user_preferences enable row level security;

@@ -20,6 +20,7 @@ def restore_request_rls_context(session: Session, _transaction, connection) -> N
         connection.execute(text("select set_config('app.current_user_id', :value, true)"), {"value": session.info["current_user_id"]})
     if session.info.get("current_user_email"):
         connection.execute(text("select set_config('app.current_user_email', :value, true)"), {"value": session.info["current_user_email"]})
+    connection.execute(text("select set_config('app.feedback_admin', :value, true)"), {"value": "true" if session.info.get("feedback_admin") else "false"})
 
 
 def build_engine(url: str | None = None):

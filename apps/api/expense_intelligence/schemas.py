@@ -17,6 +17,8 @@ class PreferenceUpdate(BaseModel):
     home_currency: str
     display_currency: str
     time_zone: str
+    theme: Literal["light", "dark", "system"] = "system"
+    accent: Literal["ocean", "emerald", "violet", "amber", "coral", "slate"] = "ocean"
 
     @field_validator("home_currency", "display_currency")
     @classmethod
@@ -78,15 +80,34 @@ class ExperienceRead(BaseModel):
 
 
 class ProductFeedbackCreate(BaseModel):
-    kind: Literal["assistant", "import", "split", "classification", "insight"]
-    sentiment: Literal["helpful", "unhelpful", "incorrect", "confusing"]
+    kind: Literal["assistant", "import", "split", "classification", "insight", "bug", "suggestion", "calculation", "general"]
+    sentiment: Literal["helpful", "unhelpful", "incorrect", "confusing", "report"]
     target_id: str | None = Field(default=None, max_length=80)
     reason: Literal["wrong_result", "missing_context", "hard_to_understand", "other"] | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    steps: str | None = Field(default=None, max_length=2000)
+    page_path: str | None = Field(default=None, max_length=300, pattern=r"^/[^?#]*$")
+    viewport: str | None = Field(default=None, max_length=32, pattern=r"^\d{2,5}x\d{2,5}$")
+    contact_allowed: bool = False
+    screenshot_data: str | None = Field(default=None, max_length=1_100_000, pattern=r"^data:image/(png|jpeg);base64,[A-Za-z0-9+/=]+$")
+
+    @model_validator(mode="after")
+    def report_has_description(self):
+        if self.kind in {"bug", "suggestion", "calculation", "general"} and not (self.description or "").strip():
+            raise ValueError("feedback description is required")
+        return self
 
 
 class ProductFeedbackRead(BaseModel):
     id: uuid.UUID
     accepted: bool = True
+
+
+class ProductFeedbackAdminRead(ProductFeedbackCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    owner_user_id: uuid.UUID
+    created_at: datetime
 
 
 class TransactionCreate(BaseModel):

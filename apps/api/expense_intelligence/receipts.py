@@ -42,6 +42,8 @@ class ReceiptCandidate(BaseModel):
     discount: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
     tax: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
     service_charge: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
+    delivery_fee: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
+    packaging_fee: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
     tip: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
     rounding: Decimal = Field(default=Decimal(0), max_digits=38, decimal_places=12)
     total: Decimal = Field(gt=0, max_digits=38, decimal_places=12)
@@ -58,7 +60,7 @@ class ReceiptCandidate(BaseModel):
 
     @model_validator(mode="after")
     def reconciles(self):
-        calculated = sum((item.line_total for item in self.items), Decimal(0)) + self.discount + self.tax + self.service_charge + self.tip + self.rounding
+        calculated = sum((item.line_total for item in self.items), Decimal(0)) + self.discount + self.tax + self.service_charge + self.delivery_fee + self.packaging_fee + self.tip + self.rounding
         if calculated != self.total:
             raise ValueError(f"receipt components reconcile to {calculated}, not {self.total}")
         return self

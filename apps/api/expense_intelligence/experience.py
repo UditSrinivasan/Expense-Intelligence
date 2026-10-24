@@ -10,7 +10,8 @@ from .auth import CurrentUser, get_current_user
 from .database import get_db
 from .group_finance import simplify_debts
 from .models import Budget, ChatMessage, GroupMember, ImportBatch, ProductFeedback, ReceiptDocument, SharedExpense, Transaction, UserPreference
-from .schemas import ExperienceRead, ExperienceUpdate, ProductFeedbackCreate, ProductFeedbackRead
+from .config import Settings, get_settings
+from .schemas import ExperienceRead, ExperienceUpdate, ProductFeedbackAdminRead, ProductFeedbackCreate, ProductFeedbackRead
 from .splitting import ComponentInput, ShareInput, _allocate
 
 router = APIRouter(prefix="/v1", tags=["experience"])
@@ -68,6 +69,13 @@ def submit_feedback(payload: ProductFeedbackCreate, user: CurrentUser = Depends(
     session.add(row)
     session.commit()
     return ProductFeedbackRead(id=row.id)
+
+
+@router.get("/feedback", response_model=list[ProductFeedbackAdminRead])
+def review_feedback(user: CurrentUser = Depends(get_current_user), settings: Settings = Depends(get_settings), session: Session = Depends(get_db)):
+    if not user.email or user.email.casefold() not in settings.feedback_admin_email_set:
+        raise HTTPException(404, "Feedback reports not found")
+    return session.scalars(select(ProductFeedback).order_by(ProductFeedback.created_at.desc()).limit(200)).all()
 
 
 @router.get("/tutorials/five-friends-split")

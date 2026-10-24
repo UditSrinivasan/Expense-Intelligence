@@ -28,7 +28,7 @@ type Group = {
 type Category = { id: string; name: string; parent_id: string | null };
 type Strategy =
   "equal" | "percentage" | "exact" | "weighted" | "quantity" | "usage" | "time";
-type Kind = "item" | "discount" | "tax" | "service_charge" | "tip" | "rounding";
+type Kind = "item" | "discount" | "tax" | "service_charge" | "delivery" | "packaging" | "tip" | "rounding";
 type Component = {
   id: string;
   label: string;
@@ -42,6 +42,13 @@ type Component = {
   included: Record<string, boolean>;
   values: Record<string, string>;
   confidence?: number;
+  nonDiscountable?: boolean;
+  promotionId?: string;
+  discountMode?: "fixed" | "percentage" | "cashback";
+  percentage?: string;
+  cap?: string;
+  minimumOrder?: string;
+  eligibleItemIds?: string[];
 };
 type Preview = {
   allocations: {
@@ -56,6 +63,7 @@ type Preview = {
     owed: string;
     balance: string;
   }[];
+  components?: { index: number; label: string; kind: Kind; amount: string; basis: string | null; mode?: string }[];
 };
 type ReceiptRecord = {
   id: string;
@@ -158,6 +166,9 @@ export default function GuidedExpensePage() {
   const componentTotal = useMemo(
     () => sumMoney(components.map((row) => row.amount || "0"), currency),
     [components, currency],
+  );
+  const hasCalculatedDiscount = components.some(
+    (row) => row.kind === "discount" && row.discountMode === "percentage",
   );
   const reconciled = total !== "" && componentTotal === sumMoney([total], currency);
 
@@ -327,6 +338,8 @@ export default function GuidedExpensePage() {
               ["Discount", "discount", found.discount],
               ["Tax / GST / VAT", "tax", found.tax],
               ["Service charge", "service_charge", found.service_charge],
+              ["Delivery fee", "delivery", found.delivery_fee],
+              ["Packaging fee", "packaging", found.packaging_fee],
               ["Tip", "tip", found.tip],
               ["Rounding", "rounding", found.rounding],
             ] as [string, Kind, string][]
@@ -403,7 +416,7 @@ export default function GuidedExpensePage() {
     );
   }
   function body() {
-    const proportional = proportionalValues();
+    const proportional = proportionalValues(), orderedComponents = [...itemComponents, ...chargeComponents];
     return {
       idempotency_key: idempotencyKey,
       description,
@@ -415,7 +428,7 @@ export default function GuidedExpensePage() {
       payers: Object.entries(payers)
         .filter(([, amount]) => Number(amount) > 0)
         .map(([member_id, amount]) => ({ member_id, amount })),
-      components: components.map((row) => {
+      components: orderedComponents.map((row) => {
         const included = includeDefaults(row),
           eligible = activeMembers.filter((member) => included[member.id]);
         const strategy: Strategy =
@@ -429,6 +442,19 @@ export default function GuidedExpensePage() {
           amount: row.amount,
           strategy,
           category_id: row.categoryId || null,
+          kind: row.kind,
+          non_discountable: Boolean(row.nonDiscountable),
+          promotion_id: row.promotionId || null,
+          discount_mode: row.kind === "discount" ? row.discountMode ?? "fixed" : null,
+          percentage: row.discountMode === "percentage" ? row.percentage || null : null,
+          cap: row.kind === "discount" ? row.cap || null : null,
+          minimum_order: row.kind === "discount" ? row.minimumOrder || null : null,
+          eligible_component_indexes:
+            row.kind === "discount"
+              ? orderedComponents.flatMap((item, index) =>
+                  item.kind === "item" && row.eligibleItemIds?.includes(item.id) ? [index] : [],
+                )
+              : [],
           shares: eligible.map((member) => ({
             member_id: member.id,
             ...(strategy === "equal"
@@ -503,6 +529,10 @@ export default function GuidedExpensePage() {
       service_charge:
         chargeComponents.find((row) => row.kind === "service_charge")?.amount ??
         "0.00",
+      delivery_fee:
+        chargeComponents.find((row) => row.kind === "delivery")?.amount ?? "0.00",
+      packaging_fee:
+        chargeComponents.find((row) => row.kind === "packaging")?.amount ?? "0.00",
       tip: chargeComponents.find((row) => row.kind === "tip")?.amount ?? "0.00",
       rounding:
         chargeComponents.find((row) => row.kind === "rounding")?.amount ??
@@ -583,7 +613,7 @@ export default function GuidedExpensePage() {
       )
     )
       return "Assign at least one consumer to every item.";
-    if (step === 3 && !reconciled)
+    if (step === 3 && !reconciled && !hasCalculatedDiscount)
       return "Correct the bill until components equal the grand total.";
     if (step === 3 && extraction && receiptRecord?.status !== "confirmed")
       return "Return to Details and confirm the reviewed receipt provenance.";
@@ -1014,6 +1044,7 @@ export default function GuidedExpensePage() {
                       key={row.id}
                       row={row}
                       members={activeMembers}
+                      items={itemComponents}
                       update={updateComponent}
                       remove={() =>
                         setComponents((rows) =>
@@ -1084,7 +1115,7 @@ export default function GuidedExpensePage() {
                       {components.map((item) => (
                         <div key={item.id}>
                           <strong>
-                            {item.label} · {money(item.amount)}
+                            {item.label} · {money(preview.components?.find((row) => row.label === item.label)?.amount ?? item.amount)}
                           </strong>
                           <p>
                             {preview.allocations
@@ -1100,6 +1131,10 @@ export default function GuidedExpensePage() {
                         </div>
                       ))}
                     </details>
+                    <div className="calculation-order" aria-label="Calculation order">
+                      <strong>Calculation order</strong>
+                      <ol><li>Recorded item prices and inclusive taxes</li><li>Eligible discounts, in the order shown</li><li>Recorded taxes, service, delivery, packaging, and tips</li><li>Deterministic minor-unit allocation among eligible people</li></ol>
+                    </div>
                     <button
                       className="confirm-expense"
                       type="button"
@@ -1172,11 +1207,14 @@ export default function GuidedExpensePage() {
                 </dd>
               </div>
             </dl>
-            {!reconciled && (
+            {!reconciled && !hasCalculatedDiscount && (
               <p className="warning-copy">
                 The component total must equal the grand total before
                 confirmation.
               </p>
+            )}
+            {hasCalculatedDiscount && !preview && (
+              <p className="field-help">Percentage promotions are calculated and validated by the financial engine during preview.</p>
             )}
           </aside>
         </div>
@@ -1318,6 +1356,10 @@ function ItemEditor({
         update={update}
         defaults={defaults}
       />
+      <label className="non-discountable-toggle">
+        <input type="checkbox" checked={Boolean(row.nonDiscountable)} onChange={(event) => update(row.id, { nonDiscountable: event.target.checked })}/>
+        Exclude this item from promotions
+      </label>
       <button
         type="button"
         className="text-button danger-text"
@@ -1331,12 +1373,14 @@ function ItemEditor({
 function ChargeEditor({
   row,
   members,
+  items,
   update,
   remove,
   defaults,
 }: {
   row: Component;
   members: Member[];
+  items: Component[];
   update: (id: string, changes: Partial<Component>) => void;
   remove: () => void;
   defaults: Record<string, boolean>;
@@ -1346,20 +1390,35 @@ function ChargeEditor({
       <legend>{row.kind.replaceAll("_", " ")}</legend>
       <div className="component-controls">
         <label>
+          Type
+          <select value={row.kind} onChange={(event) => update(row.id, { kind: event.target.value as Kind, discountMode: event.target.value === "discount" ? row.discountMode ?? "fixed" : undefined })}>
+            <option value="discount">Discount</option><option value="tax">Additional tax</option><option value="service_charge">Service charge</option><option value="delivery">Delivery fee</option><option value="packaging">Packaging fee</option><option value="tip">Tip</option><option value="rounding">Rounding</option>
+          </select>
+        </label>
+        <label>
           Label
           <input
             value={row.label}
             onChange={(event) => update(row.id, { label: event.target.value })}
           />
         </label>
-        <label>
+        {row.kind === "discount" && <label>
+          Discount method
+          <select value={row.discountMode ?? "fixed"} onChange={(event) => update(row.id, { discountMode: event.target.value as Component["discountMode"], amount: event.target.value === "percentage" ? "0" : row.amount })}>
+            <option value="fixed">Fixed amount</option><option value="percentage">Percentage</option><option value="cashback">External cashback</option>
+          </select>
+        </label>}
+        {row.kind === "discount" && row.discountMode === "percentage" ? <label>
+          Percentage
+          <input inputMode="decimal" value={row.percentage ?? ""} onChange={(event) => update(row.id, { percentage: event.target.value })} placeholder="e.g. 20" />
+        </label> : <label>
           Amount
           <input
             inputMode="decimal"
             value={row.amount}
             onChange={(event) => update(row.id, { amount: event.target.value })}
           />
-        </label>
+        </label>}
         <label>
           Allocation policy
           <select
@@ -1376,6 +1435,13 @@ function ChargeEditor({
           </select>
         </label>
       </div>
+      {row.kind === "discount" && <div className="promotion-scope">
+        <fieldset><legend>Eligible items</legend>{items.map((item) => <label key={item.id} className={item.nonDiscountable ? "disabled-choice" : ""}><input type="checkbox" disabled={item.nonDiscountable} checked={row.eligibleItemIds?.includes(item.id) ?? false} onChange={(event) => update(row.id, { eligibleItemIds: event.target.checked ? [...(row.eligibleItemIds ?? []), item.id] : (row.eligibleItemIds ?? []).filter((id) => id !== item.id) })}/><span>{item.label}{item.nonDiscountable ? " · excluded" : ""}</span></label>)}</fieldset>
+        <label>Promotion reference<input value={row.promotionId ?? ""} onChange={(event) => update(row.id, { promotionId: event.target.value })} placeholder="e.g. SAVE20" autoComplete="off" /></label>
+        <label>Maximum discount<input inputMode="decimal" value={row.cap ?? ""} onChange={(event) => update(row.id, { cap: event.target.value })} placeholder="Optional cap" /></label>
+        <label>Minimum eligible order<input inputMode="decimal" value={row.minimumOrder ?? ""} onChange={(event) => update(row.id, { minimumOrder: event.target.value })} placeholder="Optional minimum" /></label>
+        {row.discountMode === "cashback" && <p className="warning-copy">Cashback is not deducted from this bill. Record it only when it actually arrives.</p>}
+      </div>}
       <ParticipantSelector
         row={{ ...row, strategy: row.policy === "custom" ? "exact" : "equal" }}
         members={members}

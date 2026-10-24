@@ -174,6 +174,8 @@ export default function DocumentsPage() {
             receipt.discount,
             receipt.tax,
             receipt.service_charge,
+            receipt.delivery_fee,
+            receipt.packaging_fee,
             receipt.tip,
             receipt.rounding,
           ])
@@ -286,6 +288,8 @@ export default function DocumentsPage() {
         ["Discount", receipt.discount],
         ["Tax", receipt.tax],
         ["Service charge", receipt.service_charge],
+        ["Delivery fee", receipt.delivery_fee],
+        ["Packaging fee", receipt.packaging_fee],
         ["Tip", receipt.tip],
         ["Rounding", receipt.rounding],
       ]
@@ -605,7 +609,7 @@ export default function DocumentsPage() {
           </button>
           <div className="receipt-charges">
             {(
-              ["discount", "tax", "service_charge", "tip", "rounding"] as const
+              ["discount", "tax", "service_charge", "delivery_fee", "packaging_fee", "tip", "rounding"] as const
             ).map((field) => (
               <label key={field}>
                 {field.replace("_", " ")}

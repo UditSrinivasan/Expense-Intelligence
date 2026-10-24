@@ -64,6 +64,77 @@ def test_group_preview_confirm_balances_and_private_authorization(client, db):
     assert client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(USER_B), json=payload).status_code == 404
 
 
+def test_item_scoped_discount_does_not_leak_and_keeps_payers_separate(client):
+    group = create_group(client)
+    members = group["members"][:]
+    for name in ["B", "C", "D", "E", "F", "G"]:
+        response = client.post(f"/v1/groups/{group['id']}/members", headers=headers(), json={"display_name": name})
+        assert response.status_code == 201
+        members.append(response.json())
+    ids = [member["id"] for member in members]
+    payload = {
+        "idempotency_key": "11000000-0000-4000-8000-000000000001",
+        "description": "Selective promotion",
+        "total": "2600.00",
+        "currency": "INR",
+        "expense_date": "2026-10-24",
+        "payers": [{"member_id": ids[0], "amount": "2600.00"}],
+        "components": [
+            {"label": "Item X", "kind": "item", "amount": "2000.00", "strategy": "equal", "shares": [{"member_id": ids[index]} for index in [0, 1, 2, 4]]},
+            {"label": "Item Y", "kind": "item", "amount": "1000.00", "strategy": "equal", "shares": [{"member_id": ids[index]} for index in [3, 5, 6]]},
+            {"label": "X promotion", "kind": "discount", "promotion_id": "x-only", "discount_mode": "fixed", "amount": "-400.00", "eligible_component_indexes": [0], "strategy": "equal", "shares": [{"member_id": ids[index]} for index in [0, 1, 2, 4]]},
+        ],
+    }
+    response = client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=payload)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    owed = {row["member_id"]: Decimal(row["owed"]) for row in result["balances"]}
+    assert [owed[ids[index]] for index in [0, 1, 2, 4]] == [Decimal("400.00")] * 4
+    assert sorted(owed[ids[index]] for index in [3, 5, 6]) == [Decimal("333.33"), Decimal("333.33"), Decimal("333.34")]
+    assert Decimal(result["components"][2]["basis"]) == Decimal("2000.00")
+    assert sum(owed.values()) == Decimal("2600.00")
+    assert Decimal(next(row for row in result["balances"] if row["member_id"] == ids[0])["paid"]) == Decimal("2600.00")
+
+
+def test_percentage_promotions_respect_caps_minimums_and_non_discountable_items(client):
+    group = create_group(client); owner_id = group["members"][0]["id"]
+    base = {
+        "idempotency_key": "11000000-0000-4000-8000-000000000002", "description": "Promotion rules", "total": "135.00", "currency": "GBP", "expense_date": "2026-10-24",
+        "payers": [{"member_id": owner_id, "amount": "135.00"}],
+        "components": [
+            {"label": "Eligible groceries", "kind": "item", "amount": "100.00", "strategy": "equal", "shares": [{"member_id": owner_id}]},
+            {"label": "Gift card", "kind": "item", "non_discountable": True, "amount": "50.00", "strategy": "equal", "shares": [{"member_id": owner_id}]},
+            {"label": "20% eligible coupon", "kind": "discount", "promotion_id": "coupon-20", "discount_mode": "percentage", "percentage": "20", "cap": "15.00", "minimum_order": "80.00", "amount": "0.00", "eligible_component_indexes": [0], "strategy": "equal", "shares": [{"member_id": owner_id}]},
+        ],
+    }
+    response = client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=base)
+    assert response.status_code == 200, response.text
+    assert Decimal(response.json()["components"][2]["amount"]) == Decimal("-15.00")
+    invalid = {**base, "idempotency_key": "11000000-0000-4000-8000-000000000003", "components": [*base["components"][:2], {**base["components"][2], "eligible_component_indexes": [1]}]}
+    blocked = client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=invalid)
+    assert blocked.status_code == 422
+    cashback = {**base, "components": [*base["components"][:2], {**base["components"][2], "discount_mode": "cashback"}]}
+    blocked = client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=cashback)
+    assert blocked.status_code == 422
+    assert "cashback" in blocked.json()["detail"].lower()
+    stacked = {
+        **base,
+        "total": "130.00",
+        "payers": [{"member_id": owner_id, "amount": "130.00"}],
+        "components": [
+            *base["components"],
+            {"label": "Whole eligible bill voucher", "kind": "discount", "promotion_id": "bill-5", "discount_mode": "fixed", "amount": "-5.00", "strategy": "equal", "shares": [{"member_id": owner_id}]},
+        ],
+    }
+    stacked_response = client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=stacked)
+    assert stacked_response.status_code == 200, stacked_response.text
+    assert Decimal(stacked_response.json()["components"][3]["basis"]) == Decimal("85.00")
+    duplicate = {**stacked, "components": [*stacked["components"][:3], {**stacked["components"][3], "promotion_id": "coupon-20"}]}
+    assert client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=duplicate).status_code == 422
+    excessive = {**base, "total": "1.00", "payers": [{"member_id": owner_id, "amount": "1.00"}], "components": [*base["components"][:2], {**base["components"][2], "discount_mode": "fixed", "amount": "-200.00"}]}
+    assert client.post(f"/v1/groups/{group['id']}/expenses/preview", headers=headers(), json=excessive).status_code == 422
+
+
 @pytest.mark.parametrize("mutator", [
     lambda body: body["payers"].__setitem__(0, {**body["payers"][0], "amount": "69.99"}),
     lambda body: body["components"].__setitem__(0, {**body["components"][0], "amount": "109.99"}),

@@ -21,6 +21,8 @@ export type ReceiptCandidate = {
   discount: string;
   tax: string;
   service_charge: string;
+  delivery_fee: string;
+  packaging_fee: string;
   tip: string;
   rounding: string;
   total: string;
@@ -94,6 +96,8 @@ export function extractReceipt(text: string): ReceiptCandidate {
     discount: "0.00",
     tax: "0.00",
     service_charge: "0.00",
+    delivery_fee: "0.00",
+    packaging_fee: "0.00",
     tip: "0.00",
     rounding: "0.00",
     total: "",
@@ -108,6 +112,10 @@ export function extractReceipt(text: string): ReceiptCandidate {
         ? "total"
         : /gst|vat|tax/.test(lower)
           ? "tax"
+          : /delivery/.test(lower)
+            ? "delivery_fee"
+            : /packag/.test(lower)
+              ? "packaging_fee"
           : /service\s*charge/.test(lower)
             ? "service_charge"
             : /tip|gratuity/.test(lower)
@@ -117,14 +125,15 @@ export function extractReceipt(text: string): ReceiptCandidate {
                 : /discount|saving/.test(lower)
                   ? "discount"
                   : undefined;
-    if (key)
-      special[key] =
+    if (key) {
+      const normalized =
         key === "tax" && /included/i.test(line)
           ? "0.00"
           : key === "discount" && !value.startsWith("-")
             ? `-${value}`
             : value;
-    else {
+      special[key] = key === "total" ? normalized : addMoney([special[key], normalized]);
+    } else {
       const label = line
         .slice(0, line.lastIndexOf(value.replace(/,/g, "")))
         .replace(/[₹£]/g, "")
@@ -144,6 +153,8 @@ export function extractReceipt(text: string): ReceiptCandidate {
     special.discount,
     special.tax,
     special.service_charge,
+    special.delivery_fee,
+    special.packaging_fee,
     special.tip,
     special.rounding,
   ]);
