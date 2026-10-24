@@ -1,5 +1,15 @@
 import { expect, test } from "@playwright/test";
 
+test("applies browser security headers without advertising the framework", async ({ request }) => {
+  const response = await request.get("/login");
+  const headers = response.headers();
+
+  expect(headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+  expect(headers["x-content-type-options"]).toBe("nosniff");
+  expect(headers["x-frame-options"]).toBe("DENY");
+  expect(headers["x-powered-by"]).toBeUndefined();
+});
+
 test("shows a clear unconfigured Google sign-in state", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: /Your finances/ })).toBeVisible();

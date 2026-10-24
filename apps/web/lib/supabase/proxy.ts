@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { hostedConfigurationError } from "../deployment-env";
 import { isInvited } from "./invites";
 
 const publicPaths = ["/login", "/auth/login", "/auth/callback", "/auth/error"];
 
 export async function updateSession(request: NextRequest) {
+  if (hostedConfigurationError()) return NextResponse.redirect(new URL("/login?error=configuration", request.url));
   const configured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY);
   const localDevelopment = process.env.NODE_ENV === "development" && Boolean(process.env.NEXT_PUBLIC_DEV_USER_ID);
   if (!configured) {

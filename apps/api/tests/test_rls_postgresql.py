@@ -8,6 +8,8 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from expense_intelligence.auth import get_current_user
+from expense_intelligence.config import Settings
 from expense_intelligence.models import GroupMember, GroupRole, User
 from test_splitting import headers
 
@@ -57,6 +59,20 @@ def test_non_owner_rls_and_transaction_context_reset(client, db: Session):
             connection.exec_driver_sql(f'set local role "{role}"')
             assert connection.execute(text("select count(*) from transactions")).scalar_one() == 0
             transaction_scope.rollback()
+
+        with engine.connect() as connection:
+            connection.exec_driver_sql(f'set role "{role}"')
+            factory = sessionmaker(bind=connection, expire_on_commit=False)
+            with factory() as runtime_session:
+                new_identity = str(uuid.uuid4())
+                provisioned = get_current_user(
+                    credentials=None,
+                    dev_user_id=new_identity,
+                    settings=Settings(app_env="test", allow_dev_auth=True),
+                    session=runtime_session,
+                )
+                assert runtime_session.scalar(select(User).where(User.id == provisioned.id)) is not None
+            connection.exec_driver_sql("reset role")
 
         factory = sessionmaker(bind=engine, expire_on_commit=False)
         with factory() as scoped:

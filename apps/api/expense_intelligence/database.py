@@ -24,7 +24,15 @@ def restore_request_rls_context(session: Session, _transaction, connection) -> N
 
 def build_engine(url: str | None = None):
     database_url = url or get_settings().database_url
-    kwargs = {"connect_args": {"check_same_thread": False}} if database_url.startswith("sqlite") else {}
+    if database_url.startswith("sqlite"):
+        kwargs = {"connect_args": {"check_same_thread": False}}
+    else:
+        settings = get_settings()
+        kwargs = {
+            "pool_size": settings.database_pool_size,
+            "max_overflow": settings.database_max_overflow,
+            "pool_recycle": settings.database_pool_recycle_seconds,
+        }
     return create_engine(database_url, pool_pre_ping=True, **kwargs)
 
 

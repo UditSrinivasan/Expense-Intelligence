@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     web_origin: str = "http://localhost:3000"
     invited_user_emails: str = ""
     rate_limit_enabled: bool = True
+    database_pool_size: int = 5
+    database_max_overflow: int = 2
+    database_pool_recycle_seconds: int = 300
     fx_base_url: str = "https://api.frankfurter.dev/v2"
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.5-flash"
@@ -63,6 +66,8 @@ class Settings(BaseSettings):
             raise ValueError("INVITED_USER_EMAILS must contain at least one address in hosted environments")
         if not self.supabase_jwks_url or not self.supabase_jwt_issuer:
             raise ValueError("Hosted Supabase JWT configuration is incomplete")
+        if self.database_pool_size > 5 or self.database_max_overflow > 2:
+            raise ValueError("Hosted database pool exceeds the five-user demo limit")
         return self
 
     @property
