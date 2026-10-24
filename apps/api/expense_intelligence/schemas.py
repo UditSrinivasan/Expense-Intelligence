@@ -56,6 +56,39 @@ class ProfileRead(PreferenceUpdate):
     onboarding_completed: bool
 
 
+class ExperienceUpdate(BaseModel):
+    tour_state: Literal["never_started", "in_progress", "completed", "skipped"] | None = None
+    tour_step: int | None = Field(default=None, ge=0, le=30)
+    checklist_dismissed: bool | None = None
+    dashboard_reviewed: bool | None = None
+
+
+class ChecklistItem(BaseModel):
+    key: str
+    label: str
+    href: str
+    completed: bool
+
+
+class ExperienceRead(BaseModel):
+    tour_state: str
+    tour_step: int
+    checklist_dismissed: bool
+    checklist: list[ChecklistItem]
+
+
+class ProductFeedbackCreate(BaseModel):
+    kind: Literal["assistant", "import", "split", "classification", "insight"]
+    sentiment: Literal["helpful", "unhelpful", "incorrect", "confusing"]
+    target_id: str | None = Field(default=None, max_length=80)
+    reason: Literal["wrong_result", "missing_context", "hard_to_understand", "other"] | None = None
+
+
+class ProductFeedbackRead(BaseModel):
+    id: uuid.UUID
+    accepted: bool = True
+
+
 class TransactionCreate(BaseModel):
     description: str = Field(min_length=1, max_length=280)
     category: str = Field(default="Other", min_length=1, max_length=64)

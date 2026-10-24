@@ -24,6 +24,7 @@ from .group_finance import router as group_finance_router
 from .ingestion import router as ingestion_router
 from .receipts import router as receipts_router
 from .analytics import router as analytics_router
+from .experience import router as experience_router
 from .agent.providers import selected_model
 
 
@@ -41,6 +42,7 @@ app.include_router(group_finance_router)
 app.include_router(ingestion_router)
 app.include_router(receipts_router)
 app.include_router(analytics_router)
+app.include_router(experience_router)
 
 
 @app.get("/health")
