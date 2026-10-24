@@ -339,6 +339,13 @@ export default function DocumentsPage() {
       <p className="status" role="status" aria-live="polite">
         {status}
       </p>
+      <nav className="panel entry-hub" aria-label="Add financial records">
+        <div><p className="eyebrow">Choose a workflow</p><strong>What would you like to add?</strong></div>
+        <Link href="/imports">Import CSV or Excel</Link>
+        <Link href="/documents" aria-current="page">Scan Receipt or PDF</Link>
+        <Link href="/transactions?add=true">Add Transaction</Link>
+        <Link href="/groups">Open Split Builder</Link>
+      </nav>
       <section
         className="panel document-source"
         onDragOver={(event) => event.preventDefault()}

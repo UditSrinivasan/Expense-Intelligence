@@ -46,6 +46,9 @@ def test_preferences_and_transaction_are_user_scoped(client, db):
     assert created.status_code == 201
     assert client.get("/v1/transactions", headers=auth(USER_A)).json()[0]["original_amount"] == "12.350000000000"
     assert client.get("/v1/transactions", headers=auth(USER_B)).json() == []
+    assert len(client.get("/v1/transactions?query=grocer&currency=GBP&start=2026-10-01&end=2026-10-31", headers=auth(USER_A)).json()) == 1
+    assert client.get("/v1/transactions?transaction_type=income", headers=auth(USER_A)).json() == []
+    assert client.get("/v1/transactions?start=2026-11-01&end=2026-10-01", headers=auth(USER_A)).status_code == 422
 
     summary = client.get("/v1/dashboard?currency=GBP", headers=auth(USER_A)).json()
     assert Decimal(summary["expenses"]) == Decimal("12.35")
@@ -54,6 +57,14 @@ def test_preferences_and_transaction_are_user_scoped(client, db):
 
     assert db.scalar(select(Transaction)) is not None
     assert db.scalar(select(AuditEvent).where(AuditEvent.action == "transaction.created")) is not None
+
+
+def test_manual_transaction_account_must_belong_to_user(client):
+    account = client.post("/v1/accounts", headers=auth(USER_A), json={"name": "Daily", "currency": "INR"}).json()
+    payload = {"description": "Manual purchase", "direction": "expense", "original_amount": "10.25", "original_currency": "INR", "effective_date": "2026-10-24", "account_id": account["id"]}
+    created = client.post("/v1/transactions", headers=auth(USER_A), json=payload)
+    assert created.status_code == 201 and created.json()["account_id"] == account["id"]
+    assert client.post("/v1/transactions", headers=auth(USER_B), json=payload).status_code == 404
 
 
 def test_profiles_are_private_and_onboarding_is_explicit(client):

@@ -1,116 +1,53 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
-type Category = { id: string; name: string; parent_id: string | null; owner_user_id: string | null };
-type Transaction = { id: string; description: string; category: string; classification_source: string; original_amount: string; original_currency: string; effective_date: string; needs_review: boolean };
-type Rule = { id: string; match_value: string; merchant_name: string | null; category_id: string; active: boolean; evidence_count: number };
-type BulkPreview = { eligible_transaction_ids: string[]; rejected: Record<string, string>; totals_by_currency: Record<string, string>; category: Category };
+type Category = { id: string; name: string; parent_id: string | null };
+type Account = { id: string; name: string; currency: string };
+type Transaction = { id: string; description: string; category: string; category_id: string | null; classification_source: string; original_amount: string; original_currency: string; effective_date: string; direction: string; transaction_type: string; needs_review: boolean; account_id: string | null; import_batch_id: string | null; source_reference: string | null };
+type Rule = { id: string; merchant_name: string | null; category_id: string; active: boolean; evidence_count: number };
+type BulkPreview = { totals_by_currency: Record<string, string>; category: Category };
+const apiUrl = "/api/backend", headers = { "Content-Type": "application/json" };
+const money = (value: string, currency: string) => new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", { style: "currency", currency }).format(Number(value));
+const formatDate = (value: string) => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 
-const apiUrl = "/api/backend";
-const headers = { "Content-Type": "application/json" };
+export default function TransactionsPage() { return <Suspense fallback={<main id="main-content"><p className="status">Loading transactions…</p></main>}><TransactionExperience /></Suspense>; }
 
-export default function TransactionsPage() {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [rules, setRules] = useState<Rule[]>([]);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("Loading finance records…");
-  const [saving, setSaving] = useState<string>();
-  const [selected, setSelected] = useState<string[]>([]);
-  const [bulkCategory, setBulkCategory] = useState("");
-  const [bulkPreview, setBulkPreview] = useState<BulkPreview>();
-
-  async function refresh() {
-    const [transactionResponse, categoryResponse, ruleResponse] = await Promise.all([
-      fetch(`${apiUrl}/v1/transactions?limit=100`, { headers }), fetch(`${apiUrl}/v1/categories`, { headers }), fetch(`${apiUrl}/v1/classification-rules`, { headers }),
-    ]);
-    if (!transactionResponse.ok || !categoryResponse.ok || !ruleResponse.ok) throw new Error("Start the local API to manage categories.");
-    const [nextTransactions, nextCategories, nextRules] = await Promise.all([transactionResponse.json(), categoryResponse.json(), ruleResponse.json()]);
-    setTransactions(nextTransactions); setCategories(nextCategories); setRules(nextRules); setStatus("Ready");
-  }
-
-  useEffect(() => {
-    let active = true;
-    Promise.all([
-      fetch(`${apiUrl}/v1/transactions?limit=100`, { headers }), fetch(`${apiUrl}/v1/categories`, { headers }), fetch(`${apiUrl}/v1/classification-rules`, { headers }),
-    ]).then(async ([transactionResponse, categoryResponse, ruleResponse]) => {
-      if (!transactionResponse.ok || !categoryResponse.ok || !ruleResponse.ok) throw new Error("Start the local API to manage categories.");
-      const [nextTransactions, nextCategories, nextRules] = await Promise.all([transactionResponse.json(), categoryResponse.json(), ruleResponse.json()]);
-      if (active) { setTransactions(nextTransactions); setCategories(nextCategories); setRules(nextRules); setStatus("Ready"); }
-    }).catch((error) => { if (active) setStatus(error.message); });
-    return () => { active = false; };
-  }, []);
-  const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories]);
-  const children = useMemo(() => categories.filter((category) => category.parent_id), [categories]);
-  const visibleTransactions = useMemo(() => transactions.filter((transaction) => transaction.description.toLowerCase().includes(query.toLowerCase())), [transactions, query]);
-
-  async function categorize(event: FormEvent<HTMLFormElement>, transaction: Transaction) {
-    event.preventDefault(); setSaving(transaction.id);
-    const data = new FormData(event.currentTarget);
-    const categoryId = data.get("category_id")?.toString();
-    const response = await fetch(`${apiUrl}/v1/transactions/${transaction.id}/categorization`, { method: "PUT", headers, body: JSON.stringify({ allocations: [{ category_id: categoryId, amount: transaction.original_amount }], create_future_rule: data.get("future_rule") === "on" }) });
-    setSaving(undefined);
-    if (response.ok) { setStatus("Category saved. Historical records were not rewritten."); await refresh(); }
-    else setStatus((await response.json()).detail ?? "Category could not be saved.");
-  }
-
-  async function addCategory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-    const response = await fetch(`${apiUrl}/v1/categories`, { method: "POST", headers, body: JSON.stringify({ name: data.get("name"), parent_id: data.get("parent_id") || null }) });
-    if (response.ok) { form.reset(); setStatus("Custom category created."); await refresh(); }
-    else setStatus((await response.json()).detail ?? "Category could not be created.");
-  }
-
-  async function toggleRule(rule: Rule) {
-    const response = await fetch(`${apiUrl}/v1/classification-rules/${rule.id}`, { method: "PUT", headers, body: JSON.stringify({ active: !rule.active }) });
-    if (response.ok) { setStatus(rule.active ? "Rule disabled." : "Rule enabled."); await refresh(); }
-  }
-
-  async function deleteRule(rule: Rule) {
-    if (!window.confirm(`Delete the private rule for ${rule.merchant_name ?? "this merchant"}?`)) return;
-    const response = await fetch(`${apiUrl}/v1/classification-rules/${rule.id}`, { method: "DELETE", headers });
-    if (response.ok) { setStatus("Rule deleted. Existing classifications were preserved."); await refresh(); }
-  }
-
-  function toggleSelected(id: string) {
-    setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
-    setBulkPreview(undefined);
-  }
-
-  async function previewBulk() {
-    const response = await fetch(`${apiUrl}/v1/transactions/bulk-categorization/preview`, { method: "POST", headers, body: JSON.stringify({ transaction_ids: selected, category_id: bulkCategory }) });
-    const body = await response.json();
-    if (response.ok) { setBulkPreview(body); setStatus("Preview ready. Review totals before applying."); }
-    else setStatus(body.detail ?? "Bulk preview could not be prepared.");
-  }
-
-  async function applyBulk() {
-    const response = await fetch(`${apiUrl}/v1/transactions/bulk-categorization/apply`, { method: "POST", headers, body: JSON.stringify({ transaction_ids: selected, category_id: bulkCategory }) });
-    const body = await response.json();
-    if (response.ok) { setSelected([]); setBulkPreview(undefined); setBulkCategory(""); setStatus(`${body.updated} transactions categorized. No future merchant rule was created.`); await refresh(); }
-    else setStatus(body.detail ?? "Bulk correction was not applied.");
-  }
-
-  const formatMoney = (value: string, currency: string) => new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-GB", { style: "currency", currency }).format(Number(value));
-
+function TransactionExperience() {
+  const searchParams = useSearchParams();
+  const [transactions, setTransactions] = useState<Transaction[]>([]), [categories, setCategories] = useState<Category[]>([]), [rules, setRules] = useState<Rule[]>([]), [accounts, setAccounts] = useState<Account[]>([]);
+  const [query, setQuery] = useState(searchParams.get("query") ?? ""), [currency, setCurrency] = useState(searchParams.get("currency") ?? ""), [accountId, setAccountId] = useState(""), [category, setCategory] = useState(searchParams.get("category") ?? ""), [kind, setKind] = useState(""), [start, setStart] = useState(""), [end, setEnd] = useState("");
+  const [status, setStatus] = useState("Loading transactions…"), [saving, setSaving] = useState<string>(), [selected, setSelected] = useState<string[]>([]), [bulkCategory, setBulkCategory] = useState(""), [bulkPreview, setBulkPreview] = useState<BulkPreview>(), [adding, setAdding] = useState(searchParams.get("add") === "true");
+  const evidenceIds = useMemo(() => searchParams.get("ids")?.split(",") ?? [], [searchParams]);
+  const load = useCallback(async () => {
+    const params = new URLSearchParams({ limit: "500" });
+    if (query) params.set("query", query); if (currency) params.set("currency", currency); if (accountId) params.set("account_id", accountId); if (kind) params.set("transaction_type", kind); if (start) params.set("start", start); if (end) params.set("end", end);
+    const responses = await Promise.all([fetch(`${apiUrl}/v1/transactions?${params}`, { headers }), fetch(`${apiUrl}/v1/categories`, { headers }), fetch(`${apiUrl}/v1/classification-rules`, { headers }), fetch(`${apiUrl}/v1/accounts`, { headers })]);
+    if (responses.some((response) => !response.ok)) throw new Error("Transactions could not be loaded. Start the local API and try again.");
+    const [nextTransactions, nextCategories, nextRules, nextAccounts] = await Promise.all(responses.map((response) => response.json()));
+    setTransactions(nextTransactions); setCategories(nextCategories); setRules(nextRules); setAccounts(nextAccounts); setStatus((current) => current.startsWith("Loading") ? "Ready" : current);
+  }, [accountId, currency, end, kind, query, start]);
+  useEffect(() => { const pending = setTimeout(() => void load().catch((error) => setStatus(error.message)), 150); return () => clearTimeout(pending); }, [load]);
+  const categoryById = useMemo(() => new Map(categories.map((item) => [item.id, item])), [categories]);
+  const children = useMemo(() => categories.filter((item) => item.parent_id), [categories]);
+  const visible = transactions.filter((item) => (!category || item.category === category || categoryById.get(item.category_id ?? "")?.name === category) && (!evidenceIds.length || evidenceIds.includes(item.id)));
+  function copyFilterLink() { const params = new URLSearchParams(); if (query) params.set("query", query); if (currency) params.set("currency", currency); if (accountId) params.set("account", accountId); if (category) params.set("category", category); if (kind) params.set("type", kind); if (start) params.set("start", start); if (end) params.set("end", end); window.history.replaceState(null, "", params.size ? `/transactions?${params}` : "/transactions"); setStatus("Filter link updated in your address bar."); }
+  async function create(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget, data = new FormData(form); setSaving("new"); const response = await fetch(`${apiUrl}/v1/transactions`, { method: "POST", headers, body: JSON.stringify({ description: data.get("description"), original_amount: data.get("amount"), original_currency: data.get("currency"), effective_date: data.get("date"), direction: data.get("direction"), transaction_type: data.get("type"), account_id: data.get("account_id") || null, category: "Other" }) }); setSaving(undefined); if (response.ok) { form.reset(); setAdding(false); await load(); setStatus("Transaction added. Review its category below."); } else setStatus((await response.json()).detail ?? "Transaction could not be added. Check every field."); }
+  async function categorize(event: FormEvent<HTMLFormElement>, transaction: Transaction) { event.preventDefault(); setSaving(transaction.id); const data = new FormData(event.currentTarget); const response = await fetch(`${apiUrl}/v1/transactions/${transaction.id}/categorization`, { method: "PUT", headers, body: JSON.stringify({ allocations: [{ category_id: data.get("category_id"), amount: transaction.original_amount }], create_future_rule: data.get("future_rule") === "on" }) }); setSaving(undefined); if (response.ok) { await load(); setStatus("Category saved. Historical source data was preserved."); } else setStatus((await response.json()).detail ?? "Category could not be saved."); }
+  function toggleSelected(id: string) { setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]); setBulkPreview(undefined); }
+  async function bulk(preview: boolean) { const response = await fetch(`${apiUrl}/v1/transactions/bulk-categorization/${preview ? "preview" : "apply"}`, { method: "POST", headers, body: JSON.stringify({ transaction_ids: selected, category_id: bulkCategory }) }); const body = await response.json(); if (!response.ok) return setStatus(body.detail ?? "Bulk categorization could not be completed."); if (preview) { setBulkPreview(body); setStatus("Review the exact totals before applying."); } else { setSelected([]); setBulkPreview(undefined); setBulkCategory(""); await load(); setStatus(`${body.updated} transactions categorized.`); } }
+  async function toggleRule(rule: Rule) { const response = await fetch(`${apiUrl}/v1/classification-rules/${rule.id}`, { method: "PUT", headers, body: JSON.stringify({ active: !rule.active }) }); if (response.ok) { await load(); setStatus(rule.active ? "Rule disabled." : "Rule enabled."); } }
+  async function deleteRule(rule: Rule) { if (!window.confirm(`Delete the private rule for ${rule.merchant_name ?? "this merchant"}?`)) return; const response = await fetch(`${apiUrl}/v1/classification-rules/${rule.id}`, { method: "DELETE", headers }); if (response.ok) { await load(); setStatus("Rule deleted. Existing categories were preserved."); } }
+  async function addCategory(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget, data = new FormData(form); const response = await fetch(`${apiUrl}/v1/categories`, { method: "POST", headers, body: JSON.stringify({ name: data.get("name"), parent_id: data.get("parent_id") }) }); if (response.ok) { form.reset(); await load(); setStatus("Custom category created."); } else setStatus((await response.json()).detail ?? "Category could not be created."); }
   return <main className="classification-shell" id="main-content">
-    <header className="topbar"><Link className="brand" href="/"><span>EI</span>Expense Intelligence</Link><nav className="top-actions"><Link href="/imports">Import Statement</Link><Link href="/assistant">Assistant</Link><div className="environment"><i aria-hidden="true" /> Deterministic finance</div></nav></header>
-    <section className="classification-hero"><div><p className="eyebrow">Transaction classification</p><h1>Put every expense in its place.</h1><p className="lede">Correct categories directly, preserve the original payment, and choose whether an exact merchant description should become your private future rule.</p></div><label>Search transactions<input name="search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" placeholder="Search by description…" /></label></section>
+    <section className="classification-hero"><div><p className="eyebrow">Transaction history</p><h1>Every movement, fully traceable.</h1><p className="lede">Search payments, review provenance, correct categories, and keep transfers, refunds, and income explicit.</p></div><button onClick={() => setAdding((current) => !current)}>{adding ? "Close Form" : "Add Transaction"}</button></section>
     <p className="status" role="status" aria-live="polite">{status}</p>
-    <div className="classification-layout">
-      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Ledger</p><h2>Review Categories</h2></div><span>{visibleTransactions.length} records</span></div>
-        {selected.length ? <div className="bulk-bar"><div><strong>{selected.length} selected</strong><span>Bulk corrections never create merchant rules.</span></div><label>New category<select value={bulkCategory} onChange={(event) => { setBulkCategory(event.target.value); setBulkPreview(undefined); }}><option value="">Select a category…</option>{children.map((category) => <option key={category.id} value={category.id}>{categoryById.get(category.parent_id ?? "")?.name} — {category.name}</option>)}</select></label>{bulkPreview ? <button onClick={applyBulk}>Apply Confirmed Change</button> : <button disabled={!bulkCategory} onClick={previewBulk}>Preview Change</button>}{bulkPreview ? <small>{Object.entries(bulkPreview.totals_by_currency).map(([currency, amount]) => formatMoney(amount, currency)).join(" + ")} → {bulkPreview.category.name}</small> : null}</div> : null}
-        {visibleTransactions.length ? <ul className="classification-list">{visibleTransactions.map((transaction) => <li key={transaction.id}>
-          <label className="row-select"><input type="checkbox" checked={selected.includes(transaction.id)} onChange={() => toggleSelected(transaction.id)} /><span className="classification-copy"><strong>{transaction.description}</strong><span>{new Intl.DateTimeFormat(transaction.original_currency === "INR" ? "en-IN" : "en-GB", { dateStyle: "medium" }).format(new Date(`${transaction.effective_date}T00:00:00`))} · {transaction.classification_source.replaceAll("_", " ")}</span></span></label><b>{formatMoney(transaction.original_amount, transaction.original_currency)}</b>
-          <form onSubmit={(event) => categorize(event, transaction)}><label>Category<select name="category_id" defaultValue="" required><option value="" disabled>Select a category…</option>{children.map((category) => <option key={category.id} value={category.id}>{categoryById.get(category.parent_id ?? "")?.name} — {category.name}</option>)}</select></label><label className="check"><input type="checkbox" name="future_rule" /> Apply to future exact matches</label><button disabled={saving === transaction.id} type="submit">{saving === transaction.id ? "Saving…" : "Save Category"}</button></form>
-        </li>)}</ul> : <div className="empty"><h3>No matching transactions</h3><p>Try a different description.</p></div>}
-      </section>
-      <aside className="classification-side">
-        <section className="panel"><p className="eyebrow">Your taxonomy</p><h2>Add a Custom Category</h2><form onSubmit={addCategory}><label>Name<input name="name" maxLength={100} required autoComplete="off" placeholder="e.g. Pet care…" /></label><label>Parent<select name="parent_id" required><option value="">Select a parent…</option>{categories.filter((category) => !category.parent_id).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label><button type="submit">Create Category</button></form></section>
-        <section className="panel"><p className="eyebrow">Private learning</p><h2>Exact-match Rules</h2>{rules.length ? <ul className="rule-list">{rules.map((rule) => <li key={rule.id}><div><strong>{rule.merchant_name ?? "Verified merchant"}</strong><span>{categoryById.get(rule.category_id)?.name ?? "Unavailable category"} · {rule.evidence_count} confirmation</span></div><div className="rule-actions"><button className="secondary" onClick={() => toggleRule(rule)}>{rule.active ? "Disable" : "Enable"}</button><button className="danger" onClick={() => deleteRule(rule)}>Delete</button></div></li>)}</ul> : <p className="rail-copy">No rules yet. Confirm “Apply to future exact matches” during a correction.</p>}</section>
-      </aside>
-    </div>
+    {adding ? <section className="panel manual-transaction"><h2>Add a Transaction</h2><form onSubmit={create}><label>Description<input name="description" required maxLength={280} autoComplete="off" placeholder="e.g. Corner shop…" /></label><div className="form-row"><label>Amount<input name="amount" required inputMode="decimal" pattern="[0-9]+([.][0-9]+)?" placeholder="0.00" /></label><label>Currency<select name="currency" defaultValue="INR"><option>INR</option><option>GBP</option><option>USD</option><option>EUR</option><option>JPY</option><option>KWD</option></select></label><label>Date<input name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} /></label></div><div className="form-row"><label>Account<select name="account_id"><option value="">No account</option>{accounts.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.currency}</option>)}</select></label><label>Direction<select name="direction" defaultValue="expense"><option value="expense">Money out</option><option value="income">Money in</option><option value="transfer">Transfer</option></select></label><label>Type<select name="type" defaultValue="purchase"><option value="purchase">Purchase</option><option value="income">Income</option><option value="refund">Refund</option><option value="transfer">Transfer</option></select></label></div><button disabled={saving === "new"}>{saving === "new" ? "Adding…" : "Add Transaction"}</button></form></section> : null}
+    <section className="panel transaction-filters" aria-label="Transaction filters"><div className="form-row"><label>Search<input name="search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} autoComplete="off" placeholder="Merchant or description…" /></label><label>Account<select name="account" value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">All accounts</option>{accounts.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.currency}</option>)}</select></label><label>Currency<select name="currency" value={currency} onChange={(event) => setCurrency(event.target.value)}><option value="">All currencies</option><option>INR</option><option>GBP</option><option>USD</option><option>EUR</option><option>JPY</option><option>KWD</option></select></label><label>Type<select name="type" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All types</option><option value="purchase">Purchases</option><option value="income">Income</option><option value="refund">Refunds</option><option value="transfer">Transfers</option></select></label></div><div className="form-row"><label>From<input name="start" type="date" value={start} max={end || undefined} onChange={(event) => setStart(event.target.value)} /></label><label>To<input name="end" type="date" value={end} min={start || undefined} onChange={(event) => setEnd(event.target.value)} /></label><label>Category<select name="category" value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{children.map((item) => <option key={item.id}>{item.name}</option>)}</select></label><button className="secondary" onClick={copyFilterLink}>Copy Filter Link</button></div></section>
+    {selected.length ? <section className="bulk-bar"><div><strong>{selected.length} selected</strong><span>Bulk changes never create merchant rules.</span></div><label>New category<select value={bulkCategory} onChange={(event) => { setBulkCategory(event.target.value); setBulkPreview(undefined); }}><option value="">Select a category…</option>{children.map((item) => <option key={item.id} value={item.id}>{categoryById.get(item.parent_id ?? "")?.name} — {item.name}</option>)}</select></label>{bulkPreview ? <button onClick={() => void bulk(false)}>Apply Confirmed Change</button> : <button disabled={!bulkCategory} onClick={() => void bulk(true)}>Preview Change</button>}{bulkPreview ? <small>{Object.entries(bulkPreview.totals_by_currency).map(([code, amount]) => money(amount, code)).join(" + ")} → {bulkPreview.category.name}</small> : null}</section> : null}
+    <div className="classification-layout"><section className="panel"><div className="section-heading"><div><p className="eyebrow">Ledger</p><h2>Transactions</h2></div><span>{visible.length} records</span></div>{visible.length ? <ul className="classification-list">{visible.map((transaction) => <li key={transaction.id}><label className="row-select"><input type="checkbox" checked={selected.includes(transaction.id)} onChange={() => toggleSelected(transaction.id)} /><span className="classification-copy"><strong>{transaction.description}</strong><span>{formatDate(transaction.effective_date)} · {transaction.transaction_type.replaceAll("_", " ")} · {transaction.classification_source.replaceAll("_", " ")}</span></span></label><b>{transaction.direction === "expense" ? "−" : "+"}{money(transaction.original_amount, transaction.original_currency)}</b><details><summary>Details & provenance</summary><dl className="transaction-provenance"><div><dt>Source</dt><dd>{transaction.import_batch_id ? "Imported statement" : "Manual entry"}</dd></div><div><dt>Account</dt><dd>{accounts.find((item) => item.id === transaction.account_id)?.name ?? "No account"}</dd></div><div><dt>Reference</dt><dd>{transaction.source_reference || "Not provided"}</dd></div><div><dt>Review</dt><dd>{transaction.needs_review ? "Needs review" : "Reviewed"}</dd></div></dl></details><form onSubmit={(event) => categorize(event, transaction)}><label>Category<select name="category_id" defaultValue={transaction.category_id ?? ""} required><option value="" disabled>Select a category…</option>{children.map((item) => <option key={item.id} value={item.id}>{categoryById.get(item.parent_id ?? "")?.name} — {item.name}</option>)}</select></label><label className="check"><input type="checkbox" name="future_rule" /> Apply to future exact matches</label><button disabled={saving === transaction.id}>{saving === transaction.id ? "Saving…" : "Save Category"}</button></form></li>)}</ul> : <div className="empty"><h3>No Matching Transactions</h3><p>Clear a filter, add a transaction, or import a bank statement.</p><div className="row-actions"><button onClick={() => setAdding(true)}>Add Transaction</button><Link href="/imports">Import Statement</Link></div></div>}</section>
+      <aside className="classification-side"><section className="panel"><p className="eyebrow">Entry options</p><h2>Add Financial Records</h2><div className="entry-links"><button onClick={() => setAdding(true)}>Add Transaction</button><Link href="/imports">Import Bank Statement</Link><Link href="/documents">Scan Receipt</Link><Link href="/documents">Split Receipt</Link></div></section><section className="panel"><p className="eyebrow">Your taxonomy</p><h2>Add a Custom Category</h2><form onSubmit={addCategory}><label>Name<input name="name" required maxLength={100} autoComplete="off" placeholder="e.g. Pet care…" /></label><label>Parent<select name="parent_id" required><option value="">Select a parent…</option>{categories.filter((item) => !item.parent_id).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><button>Create Category</button></form></section><section className="panel"><p className="eyebrow">Private learning</p><h2>Merchant Rules</h2>{rules.length ? <ul className="rule-list">{rules.map((rule) => <li key={rule.id}><div><strong>{rule.merchant_name ?? "Verified merchant"}</strong><span>{categoryById.get(rule.category_id)?.name ?? "Unavailable category"} · {rule.evidence_count} confirmation</span></div><div className="rule-actions"><button className="secondary" onClick={() => void toggleRule(rule)}>{rule.active ? "Disable" : "Enable"}</button><button className="danger" onClick={() => void deleteRule(rule)}>Delete</button></div></li>)}</ul> : <p className="rail-copy">Create a rule when you save a category for an exact merchant match.</p>}</section></aside></div>
   </main>;
 }

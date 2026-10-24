@@ -38,11 +38,15 @@ def test_exact_aggregation_detection_and_currency_separation(client, db):
     data = response.json()
     totals = {row["currency"]: row for row in data["totals"]}
     assert totals["INR"]["spend"] == "1450.00"  # 1000 + 250 + 250 - 50
+    assert totals["INR"]["cash_outflow"] == "1450.00"
+    assert totals["INR"]["cash_net"] == "-1450.00"
     assert totals["GBP"]["spend"] == "1000.00"
     assert "never combined" in data["fx_policy"]
     assert {row["type"] for row in data["insights"]} == {"unusual_amount", "possible_duplicate"}
     assert data["history"]["unusual_amount"] is True
     assert any(row["merchant"] == "Rent" and row["frequency"] == "monthly" for row in data["recurring"])
+    assert data["recent_transactions"][0]["description"] == "Card payment"
+    assert data["recent_transactions"][0]["type"] == "credit_card_repayment"
 
 
 def test_feedback_and_recurring_decisions_are_owner_scoped(client, db):

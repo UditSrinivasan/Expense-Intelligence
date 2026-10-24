@@ -85,16 +85,28 @@ def post_transaction(
     user: CurrentUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    return create_transaction(session, user.id, payload)
+    try:
+        return create_transaction(session, user.id, payload)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/v1/transactions", response_model=list[TransactionRead])
 def get_transactions(
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=500),
+    query: str | None = Query(None, max_length=120),
+    currency: str | None = Query(None, pattern="^(INR|GBP|USD|EUR|JPY|KWD)$"),
+    account_id: uuid.UUID | None = None,
+    start: date | None = None,
+    end: date | None = None,
+    transaction_type: str | None = Query(None, pattern="^(purchase|income|refund|transfer)$"),
     user: CurrentUser = Depends(get_current_user),
     session: Session = Depends(get_db),
 ):
-    return list_transactions(session, user.id, limit)
+    if start and end and start > end:
+        raise HTTPException(422, "Start date must not be after end date")
+    from .models import TransactionType
+    return list_transactions(session, user.id, limit, query=query, currency=currency, account_id=account_id, start=start, end=end, transaction_type=TransactionType(transaction_type) if transaction_type else None)
 
 
 @app.get("/v1/categories", response_model=list[CategoryRead])

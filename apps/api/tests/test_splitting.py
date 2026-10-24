@@ -154,7 +154,7 @@ def test_five_person_receipt_split_links_payment_and_attributes_consumption(clie
     assert expense.source_receipt_id == uuid.UUID(receipt.json()["id"])
     assert db.query(ExpenseComponent).filter_by(expense_id=expense.id, category_id=uuid.UUID(alcohol["id"])).count() == 1
     analytics = client.get("/v1/analytics/overview?start=2026-10-01&end=2026-10-31", headers=headers()).json()
-    assert analytics["totals"] == [{"currency": "INR", "spend": "429.18", "income": "0.00", "refunds": "0.00", "net": "-429.18", "unclassified": "0.00", "shared_consumption": "429.18"}]
+    assert analytics["totals"] == [{"currency": "INR", "spend": "429.18", "income": "0.00", "refunds": "0.00", "cash_outflow": "2600.00", "cash_income": "0.00", "net": "-429.18", "cash_net": "-2600.00", "unclassified": "0.00", "shared_consumption": "429.18"}]
     member_analytics = client.get("/v1/analytics/overview?start=2026-10-01&end=2026-10-31", headers=headers(user_ids[1])).json()
     assert member_analytics["totals"][0]["spend"] == "229.82"
     assert member_analytics["totals"][0]["shared_consumption"] == "229.82"
