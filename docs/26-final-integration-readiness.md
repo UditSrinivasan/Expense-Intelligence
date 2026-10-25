@@ -39,7 +39,8 @@ Exception: a beta tester may explicitly attach a screenshot to a feedback report
 
 - **Supabase Free:** two free projects per owner/admin allocation, 500 MB database-size quota per project, 50,000 monthly active users, and 5 GB uncached plus 5 GB cached egress. The fixed disk is 2 GB and can become read-only near capacity. Confirm the existing project and its dashboard usage immediately before migration. Sources: [billing](https://supabase.com/docs/guides/platform/billing-on-supabase), [database size](https://supabase.com/docs/guides/platform/database-size), [egress](https://supabase.com/docs/guides/platform/manage-your-usage/egress).
 - **Netlify Free:** USD 0 with a hard 300-credit monthly limit and no auto recharge; reaching the limit pauses projects. One free team member and one concurrent build are included. Existing pre-September-2025 accounts may be on legacy pricing, so verify the account dashboard. Sources: [pricing](https://www.netlify.com/pricing/), [credit plans](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/credit-based-pricing-plans/).
-- **Northflank Developer Sandbox:** two services, two jobs and one add-on/database are advertised free and always-on, but Northflank says Sandbox is for testing rather than production and requires a payment method before resources can be created. This remains an explicit owner approval boundary. Sources: [pricing](https://northflank.com/pricing), [billing documentation](https://northflank.com/docs/v1/application/billing/pricing-on-northflank).
+- **Blitz Free (conditional FastAPI candidate):** EUR 0, no card, no expiry and hard rather than billable limits; five apps share 512 MB reserved memory. It provides automatic HTTPS and a provider subdomain, Dockerfile/GitHub deployment, encrypted environment variables and gVisor isolation. Free apps sleep after 30 minutes, and documented programmatic requests do not wake them. The existing Netlify server gateway must therefore pass a real post-sleep wake test before selection. The provider is new, offers no SLA, stores app data in Germany/backups in Finland and uses Cloudflare TLS termination. Sources: [pricing](https://blitz.cloud/pricing/), [limits](https://blitz.cloud/docs/limits/), [deployment](https://blitz.cloud/docs/deploy-from-github/), [privacy](https://blitz.cloud/privacy/), [terms](https://blitz.cloud/terms/).
+- **Rejected backend options:** Northflank and Koyeb require payment authorization; Back4app's current free container deployment lasts 60 minutes; Hugging Face requires a paid plan for Docker Spaces; Render's terms are unsuitable for this financial-data use; Railway/Fly/major clouds rely on billing, cards or expiring credits. None is an acceptable silent fallback.
 
 ## Shortest deployment checklist
 
@@ -47,15 +48,19 @@ Already complete locally:
 
 - PostgreSQL 16 and SQLite regression coverage, linear migrations through `0014`, authorization predicates/RLS scripts, bounded DB pools, hardened API image, hosted fail-closed configuration, same-origin API gateway, browser-local document processing and agent-disabled defaults.
 - Four-currency preservation/separation and deterministic financial reconciliation tests.
+- The unchanged `Dockerfile.api` built and ran locally as `amd64`, honored an injected `PORT`, served health/readiness as a non-root user with the agent disabled, and used about 140 MiB idle memory. No hosted service was created.
 
 Owner approval and account input required:
 
 1. Approve the exact role/RLS/migration sequence in the G2 packet and confirm no real-data migration is included.
 2. Confirm Supabase project Free status/usage and provide secret-safe owner, migrator and runtime connection access plus Google OAuth configuration.
 3. Approve Netlify Free and connect the GitHub repository; provide the final frontend hostname.
-4. Decide whether to accept Northflank's payment-method requirement and non-production Sandbox limitation. If not, select a reviewed backend host.
+4. Approve only a conditional Blitz Free account evaluation: no card/payment method/trial, passkey or TOTP enabled, DPA/subprocessors reviewed, and final provider subdomain recorded.
 5. Supply the invited-user and feedback-admin email allowlists and final frontend/API origins.
+6. Approve the synthetic Blitz checks in the G2 packet, including trusted-proxy verification and the mandatory post-sleep Netlify-gateway wake test. Failure means stop, not a direct-browser or weaker-security workaround.
 
-Codex can execute after that approval: read-only hosted preflight, encrypted backup verification, role bootstrap, migrations through `0014`, RLS/grants, synthetic isolation checks, secret configuration through provider stores, deployment and synthetic browser smoke tests. It must stop on an unexpected schema, paid-plan prompt, changed provider terms, or any request to import real records.
+Codex can execute after the relevant approval: verify account plan state, review downloadable account terms, configure provider secrets, deploy the existing container and perform synthetic browser/network smoke tests. Hosted backup, role bootstrap, migrations through `0014` and RLS/grants remain a distinct schema-change authorization. It must stop on an unexpected schema, payment prompt, missing trusted-proxy documentation, failed wake path, changed provider terms or any request to import real records.
 
-Real-service checks still pending: Supabase dashboard quota/account metadata, real Google OAuth redirect, TLS/database connectivity, hosted RLS with pooled sessions, provider health/rollback, India/UK latency, invited-user browser sessions, and backup restoration against a disposable hosted target.
+Real-service checks still pending: Supabase and Netlify dashboard plan/usage, Blitz account/DPA/subprocessor and proxy metadata, the post-sleep server-gateway wake path, real Google OAuth redirect, TLS/database connectivity, hosted RLS with pooled sessions, provider health/rollback, India/UK latency, invited-user browser sessions, and backup restoration against a disposable hosted target.
+
+If Blitz fails any zero-cost, privacy or wake-path condition, there is currently no verified architecture-preserving public FastAPI host meeting every constraint. The safe alternative is an owner-run local Docker instance reachable only through a private tunnel/VPN for the small demo, or postponing public access until a compliant free host exists. Supabase Free and Netlify Free can remain prepared without exposing the API or weakening authorization.
