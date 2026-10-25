@@ -14,19 +14,21 @@ This is the single approval checkpoint for the reviewed hosted database sequence
 |---|---|---:|---|
 | PostgreSQL and Google Auth | Supabase Free | USD 0 within Free limits | Existing project; acceptable subject to the reviewed database plan |
 | Next.js | Netlify Free | USD 0, hard 300-credit monthly limit | Recommended; current policy says customer content is not used for AI training without explicit opt-in |
-| FastAPI | Blitz Free | EUR 0; hard limits and no payment method | Conditional candidate pending account, DPA, proxy and wake-path verification |
+| FastAPI | DockHosting Free | USD 0; no payment method | Preferred candidate pending account, DPA, proxy and live cold-start verification |
 
 Netlify supports Next.js App Router, SSR, route handlers, middleware/proxy, and OpenNext without an application rewrite. Its Free plan pauses at its hard monthly credit limit rather than charging automatically.
 
-Blitz Free advertises no card, no expiry and hard limits: five apps, a shared 512 MB reserved-memory pool, 10 GB storage and one managed database. This application would use only one stateless app and Supabase PostgreSQL. Blitz supplies an HTTPS `*.blitz.cloud` hostname, builds an existing Dockerfile from GitHub, supports encrypted environment variables and isolates containers with gVisor. The free service sleeps after 30 minutes. Its documentation says browser visits wake an app but scripts, API clients and webhooks do not; therefore the existing Netlify server-side gateway may not wake it. That exact path must pass a post-sleep synthetic smoke test before Blitz is accepted. Do not bypass the gateway or expose access tokens to make wake-up work.
+DockHosting Free documents three projects, up to 1 GB RAM per app, an HTTPS `*.dockhosting.dev` hostname, Dockerfile deployment and scale-to-zero with the first incoming HTTP request waiting for the container and then completing normally. Unlike Blitz, it does not classify a server-origin request as ineligible to wake the app, so it is compatible on paper with the existing browser -> Netlify gateway -> FastAPI path. It stores hosted content in Frankfurt, says it does not sell content or use it for AI training, and states that the Free plan requires no payment method. The application would use only one stateless container and Supabase PostgreSQL. Sources: [pricing](https://www.dockhosting.dev/), [Docker deployment](https://docs.dockhosting.dev/docs/deploying/docker), [scale to zero](https://docs.dockhosting.dev/docs/scale-to-zero), [privacy](https://www.dockhosting.dev/privacy), [terms](https://www.dockhosting.dev/tos).
 
-Blitz is a young provider with no SLA. Its terms permit free-plan changes with notice, and its privacy documentation says app data is stored in Germany with backups in Finland while Cloudflare terminates TLS for provider subdomains. Account signup, the downloadable DPA/subprocessor terms, trusted-proxy behavior and the no-payment-method state remain explicit approval checks. Sources: [pricing](https://blitz.cloud/pricing/), [limits](https://blitz.cloud/docs/limits/), [GitHub deployment](https://blitz.cloud/docs/deploy-from-github/), [privacy](https://blitz.cloud/privacy/), [terms](https://blitz.cloud/terms/).
+Selection remains conditional because this provider is new, offers no uptime SLA, and its public material does not establish account MFA availability, a signed DPA/subprocessor list, trusted ingress proxy addresses or account-specific Free status. Those items and the real cold-start path must be verified before any private financial records are permitted.
 
 ### Rejected or conditional options
 
 - **Render Free backend: rejected.** Render's current Terms prohibit transmitting or storing financial account information or similar personally identifiable financial information. This application processes bank statement and personal transaction data.
 - **Vercel Hobby frontend: not selected.** It is personal/non-commercial only, and its current Terms permit customer-content model training on Hobby/trial Pro unless the account opts out. It remains conditional on explicit contract acceptance and verified opt-out.
 - **Northflank and Koyeb: rejected.** Both conflict with the owner's explicit no-payment-method rule.
+- **Blitz Free: rejected for this architecture.** Its rules say API clients and other programmatic requests cannot wake a sleeping app. The secure Netlify server gateway is such a request path; a direct browser visit to Blitz would not prove the application works and bypassing the gateway is prohibited.
+- **FastAPI Cloud Hobby: conditional fallback only.** It advertises no-card Hobby hosting with 0.1 CPU/512 MB, HTTPS and encrypted secrets, but is a public beta, currently lists MFA/2FA as “Soon”, hosts data in the United States and has no reviewed DPA/subprocessor packet. It is not preferred for private finance traffic until those gaps close. Sources: [pricing](https://fastapicloud.com/pricing/), [secrets](https://fastapicloud.com/docs/builds-and-deployments/environment-variables/), [privacy](https://fastapicloud.com/legal/privacy-policy/).
 - **Back4app Free containers: rejected.** Current first-party deployment guidance says a free container URL is destroyed after 60 minutes and must be redeployed; permanent hosting is paid. Sources: [pricing](https://www.back4app.com/pricing/container-as-a-service), [current deployment guide](https://www.back4app.com/blog/deploy-node-app-dockerfile-back4app).
 - **Hugging Face Spaces: rejected.** Current documentation limits free accounts to static Spaces; Docker Spaces require a paid PRO or organization plan. Source: [Spaces overview](https://huggingface.co/docs/hub/spaces-overview).
 - **Railway, Fly.io, Cloud Run and Oracle Cloud:** rejected because durable use depends on trial credits, billing activation or a payment card/account authorization.
@@ -37,7 +39,7 @@ The providers receive only the data necessary to run the application. Browser-lo
 
 - `Dockerfile.api` builds from a digest-pinned Python 3.12 slim image and the committed `uv.lock`, runs as UID 10001, binds the provider's `PORT`, and enables proxy handling only for `FORWARDED_ALLOW_IPS`.
 - The API container passed `/health` and `/ready` checks with `AGENT_MODE=disabled`; the local container smoke used an explicit ephemeral SQLite path under `/tmp`, while hosted operation requires PostgreSQL.
-- The Blitz-targeted local smoke used the existing image unchanged on `amd64`, listened on an injected `PORT=8080`, ran as the non-root `expense` user and consumed about 140 MiB at idle. That fits the platform's 512 MB total free pool but exceeds a 128 MB reserved size, so real memory behavior and any automatic size change must be checked without accepting a paid tier.
+- The provider-neutral local smoke used the existing image unchanged on `amd64`, listened on an injected `PORT=8080`, ran as the non-root `expense` user and consumed about 140 MiB at idle. That is below DockHosting's documented 1 GB Free ceiling; live memory behavior must still be checked without accepting a paid tier.
 - PostgreSQL pools are bounded to five persistent connections plus two overflow connections and recycle after five minutes. Hosted startup rejects larger pools.
 - Next.js fails closed in hosted mode unless its backend URL, Supabase URL, publishable key, and invite allowlist exist.
 - Next.js emits CSP, frame, MIME-sniffing, referrer, and browser-permission headers and suppresses the framework header.
@@ -117,15 +119,15 @@ Frontend server/runtime:
 
 No AI API key, database owner password, migrator password, Supabase service-role key, backup identity, or private document belongs in either deployment.
 
-### Conditional Blitz setup after approval
+### Conditional DockHosting setup after approval
 
-1. Create or verify a Free account without entering payment details, enabling a trial or accepting a paid plan; enable a passkey or TOTP.
-2. Connect the GitHub repository and select the committed `Dockerfile.api`. Do not use generated container configuration. Keep the provider-assigned HTTPS subdomain and port `8000` detected from `EXPOSE 8000`.
-3. Configure only the backend variables above. Do not configure a Blitz database, persistent folder or original-document storage.
+1. Create or verify a Free account without entering payment details, enabling a trial or accepting a paid plan. Enable MFA if the account offers it; stop if strong account authentication is unavailable.
+2. Connect the GitHub repository and select the committed `Dockerfile.api` as the custom Dockerfile path. Do not use generated container configuration. Keep the provider-assigned HTTPS subdomain and the platform-provided `PORT`.
+3. Configure only the backend variables above as secrets. Do not configure a DockHosting database, persistent volume or original-document storage.
 4. Obtain documented ingress proxy addresses before expanding `FORWARDED_ALLOW_IPS`. Never use `*`; if trustworthy ranges are unavailable, stop rather than trusting spoofable forwarded headers.
 5. Verify `/health` and `/ready`, Supabase TLS/session-pool connectivity, memory below the free ceiling, redacted logs, and synthetic authorization checks.
-6. Let the app sleep for at least 35 minutes, then test the real browser -> Netlify `/api/backend` -> Blitz route. The first request must wake and complete safely; direct browser wake-up alone is insufficient.
-7. Confirm the dashboard still says Free, exposes no payment method and offers no automatic charge path. Record the DPA/subprocessor review and a provider-exit/backup procedure.
+6. Determine the observed idle threshold, let the app sleep beyond it, then test the real browser -> Netlify `/api/backend` -> DockHosting route. The first request must wait, wake and complete safely while preserving the Supabase session.
+7. Confirm the dashboard still says Free, exposes no payment method and offers no automatic charge path. Record the DPA/subprocessor, log-retention, MFA and provider-exit review.
 
 Failure of any step leaves the API undeployed. The safe fallback is local Docker access over a private owner-controlled network for the invited demo, or waiting for a qualifying host; it is not a weaker authentication or direct-browser workaround.
 
@@ -135,8 +137,8 @@ Approval must explicitly cover:
 
 1. the ordered hosted database/role/RLS plan above;
 2. Netlify Free as the frontend provider under its current data policy;
-3. conditional evaluation of Blitz Free under the seven checks above, with no payment method and no paid fallback;
-4. the Blitz DPA/privacy terms and Cloudflare TLS-processing boundary after account review;
+3. conditional evaluation of DockHosting Free under the seven checks above, with no payment method and no paid fallback;
+4. the DockHosting DPA, subprocessors, account-security controls and EU processing boundary after account review;
 5. use of the owner-supplied invite addresses and exact provider-generated hosted URLs when allocated.
 
 After that approval and the required account connections, only read-only/account checks and synthetic deployment validation may proceed. Hosted schema changes still require the separately stated database authorization. Any payment prompt, changed provider, destructive action, unexpected existing schema, broader data migration, failed wake-path test or weakened trust boundary requires an immediate stop and a new decision.
